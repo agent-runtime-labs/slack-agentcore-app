@@ -25,7 +25,7 @@ from auth_state import AuthState
 logger = logging.getLogger(__name__)
 
 MCP_SERVER_URL = "https://api.githubcopilot.com/mcp/"
-SCOPES = ["repo", "read:user"]
+SCOPES = ["repo", "read:user", "read:org"]
 # The outer chat model is tuned for short Slack replies (max_tokens=1024), which is too tight
 # once this agent has to chain tool calls (e.g. get_me -> search_repositories) through GitHub's
 # verbose MCP tool schemas and then summarize the result -- it was hitting
@@ -40,10 +40,12 @@ GITHUB_AGENT_SYSTEM_PROMPT = (
     "tools available to you. Chain multiple tool calls when a request needs it -- most requests "
     "about 'my' repositories, issues, or pull requests need two calls: first get_me to find the "
     "user's login, then a search tool (e.g. search_repositories with query 'user:<login>', or "
-    "search_issues/search_pull_requests with 'author:<login>') scoped to that login. Never answer "
-    "that something can't be done without first trying the relevant tool(s) yourself. Answer "
-    "briefly and only report what the tools return; never invent repositories, issues, pull "
-    "requests, or profile data."
+    "search_issues/search_pull_requests with 'author:<login>') scoped to that login. For questions "
+    "about which organizations the user belongs to or has access to, call get_teams with no "
+    "'user' argument (it defaults to the authenticated user) and list the distinct organizations "
+    "from the returned teams. Never answer that something can't be done without first trying the "
+    "relevant tool(s) yourself. Answer briefly and only report what the tools return; never invent "
+    "repositories, issues, pull requests, organizations, or profile data."
 )
 
 

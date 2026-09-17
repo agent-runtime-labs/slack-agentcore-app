@@ -1,11 +1,17 @@
 # GitHub and AgentCore Identity Setup
 
 The agent's GitHub tool (`use_github` in `src/github.py`) gets the signed-in user's own GitHub
-access token from AgentCore Identity (OAuth2 scopes `repo` and `read:user`), then hands that
-token to GitHub's official **remote MCP server** (`https://api.githubcopilot.com/mcp/`) as a
-Bearer credential. A small nested Strands agent is given that server's tools for the duration
-of the call, so the assistant can act on issues, pull requests, repositories, and code search —
-not just read the user's profile — all scoped to whatever the user consented to.
+access token from AgentCore Identity (OAuth2 scopes `repo`, `read:user`, and `read:org`), then
+hands that token to GitHub's official **remote MCP server** (`https://api.githubcopilot.com/mcp/`)
+as a Bearer credential. A small nested Strands agent (Claude Haiku, via `GITHUB_MODEL_ID`) is
+given that server's tools for the duration of the call, so the assistant can act on issues, pull
+requests, repositories, code search, and org/team membership — not just read the user's profile —
+all scoped to whatever the user consented to.
+
+`read:org` was added after `repo`/`read:user`. Every call to `use_github` requests all three
+scopes up front (see `fetch_token` in `src/github.py`), so a user who connected before this change
+will see `AUTHORIZATION_REQUIRED` on their very next GitHub request — not just org/team ones — and
+needs to reconnect once before anything works again.
 
 The AgentCore Identity half of this follows the exact same pattern as
 [linkedin-setup.md](linkedin-setup.md) — a second, independent AgentCore Identity OAuth2
