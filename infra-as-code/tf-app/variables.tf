@@ -30,6 +30,12 @@ variable "linkedin_provider_name" {
   default     = "slack-agent-linkedin"
 }
 
+variable "github_provider_name" {
+  type        = string
+  description = "AgentCore Identity OAuth2 credential provider (created by scripts/identity-setup.sh)"
+  default     = "slack-agent-github"
+}
+
 variable "log_level" {
   type    = string
   default = "INFO"

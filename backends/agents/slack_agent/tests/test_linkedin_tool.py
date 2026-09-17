@@ -53,7 +53,7 @@ def test_requests_consent_when_no_token(calls):
     output, state = run_tool()
 
     assert output.startswith("AUTHORIZATION_REQUIRED")
-    assert state.as_dict() == {"authorizationUrl": "https://li/auth", "sessionUri": "urn:s1"}
+    assert state.as_dict() == {"provider": "LinkedIn", "authorizationUrl": "https://li/auth", "sessionUri": "urn:s1"}
 
 
 def test_revoked_token_forces_reauthentication(calls):

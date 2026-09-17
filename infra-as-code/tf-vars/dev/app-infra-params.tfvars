@@ -4,6 +4,7 @@ project_name = "slack-agentcore"
 
 model_id               = "us.amazon.nova-micro-v1:0"
 linkedin_provider_name = "slack-agent-linkedin"
+github_provider_name   = "slack-agent-github"
 log_level              = "INFO"
 
 default_tags = {

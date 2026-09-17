@@ -7,10 +7,11 @@ AWS_REGION = os.getenv("AWS_REGION", "us-east-1")
 # Amazon Nova Micro: the lowest-cost Bedrock text model with tool use.
 MODEL_ID = os.getenv("MODEL_ID", "us.amazon.nova-micro-v1:0")
 
-# AgentCore Identity OAuth2 credential provider (created by infra-as-code/scripts/identity-setup.sh).
+# AgentCore Identity OAuth2 credential providers (created by infra-as-code/scripts/identity-setup.sh).
 LINKEDIN_PROVIDER_NAME = os.getenv("LINKEDIN_PROVIDER_NAME", "slack-agent-linkedin")
+GITHUB_PROVIDER_NAME = os.getenv("GITHUB_PROVIDER_NAME", "slack-agent-github")
 
-# Where AgentCore Identity sends the browser after LinkedIn consent (our /oauth2/callback).
+# Where AgentCore Identity sends the browser after consent (our /oauth2/callback).
 # Must be listed in the workload identity's allowed return URLs.
 OAUTH2_RETURN_URL = os.getenv("OAUTH2_RETURN_URL", "")
 

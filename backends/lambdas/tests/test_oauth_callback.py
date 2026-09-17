@@ -26,6 +26,7 @@ def pending():
     item = PendingAuth(
         nonce="n1",
         runtime_user_id="slack-T999-UALICE",
+        provider="LinkedIn",
         session_uri="urn:session:abc",
         authorization_url="https://www.linkedin.com/oauth/v2/authorization?x=1",
         channel="C123",

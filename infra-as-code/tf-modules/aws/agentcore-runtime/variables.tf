@@ -32,9 +32,9 @@ variable "model_resource_arns" {
   description = "Bedrock foundation-model / inference-profile ARNs the agent may invoke"
 }
 
-variable "oauth2_credential_provider_name" {
-  type        = string
-  description = "AgentCore Identity OAuth2 credential provider the agent may fetch user tokens from"
+variable "oauth2_credential_provider_names" {
+  type        = list(string)
+  description = "AgentCore Identity OAuth2 credential providers the agent may fetch user tokens from"
 }
 
 variable "allowed_oauth2_return_urls" {

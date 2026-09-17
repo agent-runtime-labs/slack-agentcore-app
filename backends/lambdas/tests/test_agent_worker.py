@@ -50,7 +50,10 @@ def test_auth_required_sends_private_link(monkeypatch, slack):
     monkeypatch.setattr(
         agent_worker,
         "invoke_agent",
-        lambda *a: {"message": "x", "authRequired": {"authorizationUrl": "https://li/auth", "sessionUri": "urn:s1"}},
+        lambda *a: {
+            "message": "x",
+            "authRequired": {"provider": "LinkedIn", "authorizationUrl": "https://li/auth", "sessionUri": "urn:s1"},
+        },
     )
     agent_worker.process(JOB)
 

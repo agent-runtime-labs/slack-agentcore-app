@@ -32,10 +32,11 @@ k8s_object('ConfigMap', 'app-config', {
     'AWS_DEFAULT_REGION': AWS_REGION,
     'MODEL_ID': os.getenv('MODEL_ID', 'us.amazon.nova-micro-v1:0'),
     'LINKEDIN_PROVIDER_NAME': os.getenv('LINKEDIN_PROVIDER_NAME', 'slack-agent-linkedin'),
+    'GITHUB_PROVIDER_NAME': os.getenv('GITHUB_PROVIDER_NAME', 'slack-agent-github'),
     'LOCAL_WORKLOAD_NAME': os.getenv('LOCAL_WORKLOAD_NAME', 'slack-agent-local'),
     'OAUTH2_RETURN_URL': LOCAL_BASE_URL + '/oauth2/callback',
-    # The browser doing LinkedIn consent runs on this machine, so localhost works
-    # even when Slack events arrive through an ngrok tunnel.
+    # The browser doing consent runs on this machine, so localhost works even
+    # when Slack events arrive through an ngrok tunnel.
     'PUBLIC_BASE_URL': LOCAL_BASE_URL,
     'COOKIE_SECURE': 'false',
     'SLACK_DRY_RUN': SLACK_DRY_RUN,

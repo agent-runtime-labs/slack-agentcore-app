@@ -82,18 +82,23 @@ resource "aws_iam_role_policy" "execution" {
         Sid    = "UserOAuthTokens"
         Effect = "Allow"
         Action = ["bedrock-agentcore:GetResourceOauth2Token"]
-        Resource = [
-          "${local.arn_prefix}:workload-identity-directory/default",
-          "${local.arn_prefix}:workload-identity-directory/default/workload-identity/*",
-          "${local.arn_prefix}:token-vault/default",
-          "${local.arn_prefix}:token-vault/default/oauth2credentialprovider/${var.oauth2_credential_provider_name}",
-        ]
+        Resource = concat(
+          [
+            "${local.arn_prefix}:workload-identity-directory/default",
+            "${local.arn_prefix}:workload-identity-directory/default/workload-identity/*",
+            "${local.arn_prefix}:token-vault/default",
+          ],
+          [for name in var.oauth2_credential_provider_names : "${local.arn_prefix}:token-vault/default/oauth2credentialprovider/${name}"]
+        )
       },
       {
-        Sid      = "OAuthClientSecret"
-        Effect   = "Allow"
-        Action   = ["secretsmanager:GetSecretValue"]
-        Resource = "arn:aws:secretsmanager:${local.region}:${local.account_id}:secret:bedrock-agentcore-identity!default/oauth2/${var.oauth2_credential_provider_name}*"
+        Sid    = "OAuthClientSecret"
+        Effect = "Allow"
+        Action = ["secretsmanager:GetSecretValue"]
+        Resource = [
+          for name in var.oauth2_credential_provider_names :
+          "arn:aws:secretsmanager:${local.region}:${local.account_id}:secret:bedrock-agentcore-identity!default/oauth2/${name}*"
+        ]
       },
     ]
   })

@@ -34,6 +34,7 @@ cp .env.tmpl .env
 Edit `.env`:
 - `AWS_PROFILE` / `AWS_REGION`: the profile and region to use.
 - `LINKEDIN_CLIENT_ID` / `LINKEDIN_CLIENT_SECRET`: from your LinkedIn developer app (see [linkedin-setup.md](linkedin-setup.md)).
+- `GITHUB_CLIENT_ID` / `GITHUB_CLIENT_SECRET`: optional, from a GitHub OAuth App (see [github-setup.md](github-setup.md)). Skip if you only want the LinkedIn tool.
 - Leave `SLACK_DRY_RUN=true` for now. You don't need a Slack workspace yet.
 
 `.env` is git-ignored. Never commit it.
@@ -49,11 +50,16 @@ make identity
 #    https://bedrock-agentcore.us-east-1.amazonaws.com/identities/oauth2/callback/<uuid>
 #    Add it to LinkedIn app > Auth > Authorized redirect URLs.
 
+# GitHub OAuth2 credential provider (optional, built-in GitHub vendor)
+make identity-github
+# -> same idea: add the printed URL to your GitHub OAuth App's
+#    Authorization callback URL. See github-setup.md.
+
 # Workload identity used only by local development
 make local-workload
 ```
 
-The local workload identity allows `http://localhost:8081/oauth2/callback` as a return URL. That's where AgentCore Identity sends your browser after LinkedIn consent.
+The local workload identity allows `http://localhost:8081/oauth2/callback` as a return URL. That's where AgentCore Identity sends your browser after LinkedIn or GitHub consent.
 
 ## 4. Start the stack
 
@@ -90,6 +96,8 @@ Edits under `backends/**/src` sync into the pods and restart them automatically.
 4. Send the same question again. The log now shows `chat.update` with your real LinkedIn name.
 5. Send it with a different user, `--user USOMEONEELSE`. That user is asked to connect again: tokens are stored per user.
 
+If you set up `make identity-github`, the same flow works for `--text "What is my GitHub username?"` — same connect-link pattern, `get_my_github_profile` tool, `slack-agent-github` provider.
+
 To call the agent container directly, use [backends/requests.http](../backends/requests.http) (VS Code REST Client) or curl:
 
 ```bash
@@ -112,7 +120,7 @@ curl -s localhost:8080/invocations -H 'Content-Type: application/json' \
 make test
 ```
 
-This runs 35 unit tests: signature checks, event filtering, the worker's auth branch, OAuth session binding and replay protection, the LinkedIn tool, and the local server.
+This runs 39 unit tests: signature checks, event filtering, the worker's auth branch, OAuth session binding and replay protection, the LinkedIn and GitHub tools, and the local server.
 
 ## 8. Stop
 
@@ -125,6 +133,7 @@ To remove the AgentCore Identity resources as well:
 ```bash
 aws bedrock-agentcore-control delete-workload-identity --name slack-agent-local
 aws bedrock-agentcore-control delete-oauth2-credential-provider --name slack-agent-linkedin
+aws bedrock-agentcore-control delete-oauth2-credential-provider --name slack-agent-github
 ```
 
 Next: [testing-guide.md](testing-guide.md) for every test flow with expected output, then [deployment.md](deployment.md) to run it in AWS.

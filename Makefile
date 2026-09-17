@@ -1,7 +1,7 @@
 UV := uv run --quiet --no-project --python 3.13
 ENV ?= dev
 
-.PHONY: help up down test tf-validate identity local-workload deploy outputs
+.PHONY: help up down test tf-validate identity identity-github local-workload deploy outputs
 
 help: ## Show targets
 	@grep -E '^[a-z-]+:.*## ' $(MAKEFILE_LIST) | awk -F':.*## ' '{printf "  %-16s %s\n", $$1, $$2}'
@@ -22,6 +22,9 @@ tf-validate: ## terraform fmt check + validate
 
 identity: ## Create/update the LinkedIn credential provider (needs LINKEDIN_CLIENT_ID/SECRET)
 	./infra-as-code/scripts/identity-setup.sh linkedin-provider
+
+identity-github: ## Create/update the GitHub credential provider (needs GITHUB_CLIENT_ID/SECRET)
+	./infra-as-code/scripts/identity-setup.sh github-provider
 
 local-workload: ## Create/update the workload identity used by Tilt
 	./infra-as-code/scripts/identity-setup.sh local-workload
