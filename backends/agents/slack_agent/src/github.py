@@ -66,7 +66,9 @@ def fetch_token(workload_token: str, force: bool = False) -> dict:
 
 @lru_cache(maxsize=1)
 def _github_agent_model() -> BedrockModel:
-    return BedrockModel(model_id=config.MODEL_ID, region_name=config.AWS_REGION, temperature=0.2, max_tokens=GITHUB_AGENT_MAX_TOKENS)
+    return BedrockModel(
+        model_id=config.GITHUB_MODEL_ID, region_name=config.AWS_REGION, temperature=0.2, max_tokens=GITHUB_AGENT_MAX_TOKENS
+    )
 
 
 def _run_github_mcp_agent(access_token: str, request: str) -> str:

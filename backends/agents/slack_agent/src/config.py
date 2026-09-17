@@ -7,6 +7,10 @@ AWS_REGION = os.getenv("AWS_REGION", "us-east-1")
 # Amazon Nova Micro: the lowest-cost Bedrock text model with tool use.
 MODEL_ID = os.getenv("MODEL_ID", "us.amazon.nova-micro-v1:0")
 
+# Claude Haiku 4.5: used only for the GitHub MCP sub-agent, which chains multiple tool calls
+# through GitHub's large tool catalog -- Nova Micro was hitting MaxTokensReachedException on it.
+GITHUB_MODEL_ID = os.getenv("GITHUB_MODEL_ID", "us.anthropic.claude-haiku-4-5-20251001-v1:0")
+
 # AgentCore Identity OAuth2 credential providers (created by infra-as-code/scripts/identity-setup.sh).
 LINKEDIN_PROVIDER_NAME = os.getenv("LINKEDIN_PROVIDER_NAME", "slack-agent-linkedin")
 GITHUB_PROVIDER_NAME = os.getenv("GITHUB_PROVIDER_NAME", "slack-agent-github")
