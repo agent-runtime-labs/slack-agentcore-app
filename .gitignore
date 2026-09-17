@@ -1,0 +1,29 @@
+# Secrets
+.env
+*.pem
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+.pytest_cache/
+.ruff_cache/
+
+# Terraform
+.terraform/
+*.tfstate
+*.tfstate.*
+*.tfplan
+crash.log
+
+# Tilt / tooling
+.tiltbuild/
+.bedrock_agentcore.yaml
+.agentcore.json
+
+# Local agent tooling state
+.claude-flow/
+
+# OS / editors
+.DS_Store
+.idea/

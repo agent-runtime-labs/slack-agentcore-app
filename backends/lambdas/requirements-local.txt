@@ -1,0 +1,3 @@
+# Only used by the local (Tilt) server that wraps the Lambda handlers.
+fastapi>=0.115.0
+uvicorn>=0.34.0

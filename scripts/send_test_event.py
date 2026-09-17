@@ -1,0 +1,79 @@
+"""Send a correctly signed, fake Slack `app_mention` event to the local server.
+
+    python scripts/send_test_event.py --text "What is my LinkedIn name?"
+
+Uses SLACK_SIGNING_SECRET from the environment (Tilt's default is
+"local-dev-signing-secret"). With SLACK_DRY_RUN=true the replies, including the
+private "Connect LinkedIn" link, show up in the slack-app logs in Tilt.
+"""
+
+import argparse
+import hashlib
+import hmac
+import json
+import os
+import time
+import urllib.error
+import urllib.request
+import uuid
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument("--text", default="Hello! What can you do?")
+    parser.add_argument("--user", default="ULOCALDEV1", help="Fake Slack user ID (each ID gets its own LinkedIn token)")
+    parser.add_argument("--team", default="TLOCALDEV1")
+    parser.add_argument("--channel", default="CLOCALDEV1")
+    parser.add_argument("--thread-ts", default=None, help="Reuse to continue a conversation")
+    parser.add_argument("--dm", action="store_true", help="Send as a direct message instead of a mention")
+    parser.add_argument("--url", default="http://localhost:8081/slack/events")
+    args = parser.parse_args()
+
+    if not args.url.startswith(("http://localhost", "http://127.0.0.1")):
+        raise SystemExit("This helper only targets the local server.")
+
+    ts = f"{time.time():.6f}"
+    event = {
+        "type": "message" if args.dm else "app_mention",
+        "user": args.user,
+        "text": args.text if args.dm else f"<@UBOTLOCAL> {args.text}",
+        "channel": args.channel,
+        "ts": ts,
+        "team": args.team,
+    }
+    if args.dm:
+        event["channel_type"] = "im"
+    if args.thread_ts:
+        event["thread_ts"] = args.thread_ts
+
+    body = json.dumps({
+        "type": "event_callback",
+        "team_id": args.team,
+        "event_id": f"Ev{uuid.uuid4().hex[:10]}",
+        "event": event,
+    })
+    secret = os.getenv("SLACK_SIGNING_SECRET", "local-dev-signing-secret")
+    stamp = str(int(time.time()))
+    signature = "v0=" + hmac.new(secret.encode(), f"v0:{stamp}:{body}".encode(), hashlib.sha256).hexdigest()
+
+    request = urllib.request.Request(
+        args.url,
+        data=body.encode(),
+        method="POST",
+        headers={
+            "Content-Type": "application/json",
+            "X-Slack-Request-Timestamp": stamp,
+            "X-Slack-Signature": signature,
+        },
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=10) as response:  # nosec B310 - localhost only
+            print(response.status, response.read().decode())
+    except urllib.error.HTTPError as err:
+        raise SystemExit(f"{err.code} {err.read().decode()}") from None
+    print(f"thread_ts={args.thread_ts or ts}  (pass --thread-ts to continue this conversation)")
+    print("Watch the slack-app logs in Tilt for the agent's reply.")
+
+
+if __name__ == "__main__":
+    main()

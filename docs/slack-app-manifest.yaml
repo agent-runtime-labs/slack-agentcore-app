@@ -1,0 +1,32 @@
+# Slack app manifest — https://api.slack.com/reference/manifests
+# Replace request_url with your API Gateway (terraform output slack_events_url)
+# or ngrok URL before creating the app.
+display_information:
+  name: AgentCore Assistant
+  description: Slack assistant powered by Amazon Bedrock AgentCore
+  background_color: "#232f3e"
+features:
+  app_home:
+    home_tab_enabled: false
+    messages_tab_enabled: true
+    messages_tab_read_only_enabled: false
+  bot_user:
+    display_name: AgentCore Assistant
+    always_online: true
+oauth_config:
+  scopes:
+    bot:
+      - app_mentions:read
+      - chat:write
+      - im:history
+      - im:read
+      - im:write
+settings:
+  event_subscriptions:
+    request_url: https://7b58-2405-201-6807-d1d3-b9b9-1a2e-4895-2ed.ngrok-free.app/slack/events
+    bot_events:
+      - app_mention
+      - message.im
+  org_deploy_enabled: false
+  socket_mode_enabled: false
+  token_rotation_enabled: false

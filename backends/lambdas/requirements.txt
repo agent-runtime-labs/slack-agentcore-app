@@ -1,0 +1,5 @@
+# Runtime dependencies shared by all three Lambda handlers.
+# boto3 is pinned newer than the Lambda-bundled version because
+# InvokeAgentRuntime(runtimeUserId=...) needs a recent service model.
+boto3>=1.43.0
+slack-sdk>=3.36.0
