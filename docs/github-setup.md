@@ -1,8 +1,17 @@
 # GitHub and AgentCore Identity Setup
 
-The agent's GitHub tool reads the signed-in user's profile from `https://api.github.com/user`, using OAuth2 scope `read:user`.
+The agent's GitHub tool (`use_github` in `src/github.py`) gets the signed-in user's own GitHub
+access token from AgentCore Identity (OAuth2 scopes `repo` and `read:user`), then hands that
+token to GitHub's official **remote MCP server** (`https://api.githubcopilot.com/mcp/`) as a
+Bearer credential. A small nested Strands agent is given that server's tools for the duration
+of the call, so the assistant can act on issues, pull requests, repositories, and code search —
+not just read the user's profile — all scoped to whatever the user consented to.
 
-This follows the exact same pattern as [linkedin-setup.md](linkedin-setup.md) — a second, independent AgentCore Identity OAuth2 credential provider, using the built-in `GithubOauth2` vendor instead of `LinkedinOauth2`. No AgentCore Gateway or MCP server is involved; the agent calls GitHub's REST API directly, the same way it calls LinkedIn's.
+The AgentCore Identity half of this follows the exact same pattern as
+[linkedin-setup.md](linkedin-setup.md) — a second, independent AgentCore Identity OAuth2
+credential provider, using the built-in `GithubOauth2` vendor instead of `LinkedinOauth2`. No
+AgentCore Gateway is involved; the agent talks directly to GitHub's public remote MCP server,
+authenticated with the per-user token from AgentCore Identity's vault.
 
 ## 1. Create a GitHub OAuth App
 

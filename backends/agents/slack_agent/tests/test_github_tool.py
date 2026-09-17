@@ -1,4 +1,3 @@
-import json
 import sys
 from pathlib import Path
 
@@ -7,42 +6,47 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 import github  # noqa: E402
+from strands.types.exceptions import MaxTokensReachedException, MCPClientInitializationError  # noqa: E402
 
 
 @pytest.fixture
 def calls(monkeypatch):
-    log = {"fetch": [], "user": []}
-    responses = {"fetch": [], "user": []}
+    log = {"fetch": [], "mcp": []}
+    responses = {"fetch": [], "mcp": []}
 
     def fake_fetch(workload_token, force=False):
         log["fetch"].append((workload_token, force))
         return responses["fetch"].pop(0)
 
-    def fake_user(access_token):
-        log["user"].append(access_token)
-        return responses["user"].pop(0)
+    def fake_run_github_mcp_agent(access_token, request):
+        log["mcp"].append((access_token, request))
+        result = responses["mcp"].pop(0)
+        if isinstance(result, Exception):
+            raise result
+        return result
 
     monkeypatch.setattr(github, "fetch_token", fake_fetch)
-    monkeypatch.setattr(github, "call_user", fake_user)
+    monkeypatch.setattr(github, "_run_github_mcp_agent", fake_run_github_mcp_agent)
     return log, responses
 
 
-def run_tool(state=None, token="wat-alice"):
+def run_tool(state=None, token="wat-alice", request="show my profile"):
     state = state or github.AuthState()
     tool = github.build_github_tool(lambda: token, state)
-    return tool(), state
+    return tool(request=request), state
 
 
-def test_returns_profile_when_token_exists(calls):
+def test_returns_mcp_result_when_token_exists(calls):
     log, responses = calls
     responses["fetch"].append({"accessToken": "gh-token"})
-    responses["user"].append((200, {"login": "alice"}))
+    responses["mcp"].append('{"login": "alice"}')
 
     output, state = run_tool()
 
-    assert json.loads(output) == {"login": "alice"}
+    assert output == '{"login": "alice"}'
     assert state.as_dict() is None
     assert log["fetch"] == [("wat-alice", False)]
+    assert log["mcp"] == [("gh-token", "show my profile")]
 
 
 def test_requests_consent_when_no_token(calls):
@@ -58,7 +62,7 @@ def test_requests_consent_when_no_token(calls):
 def test_revoked_token_forces_reauthentication(calls):
     log, responses = calls
     responses["fetch"] += [{"accessToken": "stale"}, {"authorizationUrl": "https://gh/auth", "sessionUri": "urn:s2"}]
-    responses["user"].append((401, {"error": "Unauthorized"}))
+    responses["mcp"].append(MCPClientInitializationError("the client initialization failed: 401 Unauthorized"))
 
     output, state = run_tool()
 
@@ -70,5 +74,17 @@ def test_revoked_token_forces_reauthentication(calls):
 def test_errors_are_reported_to_model(calls):
     _, responses = calls
     responses["fetch"].append({"accessToken": "gh-token"})
-    responses["user"].append((500, {}))
-    assert run_tool()[0] == "ERROR: GitHub returned HTTP 500"
+    responses["mcp"].append(RuntimeError("boom"))
+
+    assert run_tool()[0] == "ERROR: could not reach GitHub right now"
+
+
+def test_max_tokens_reached_is_reported_without_swallowing_success(calls):
+    _, responses = calls
+    responses["fetch"].append({"accessToken": "gh-token"})
+    responses["mcp"].append(MaxTokensReachedException("Model stopped generating due to maximum token limit."))
+
+    output = run_tool()[0]
+
+    assert output.startswith("ERROR:")
+    assert "too much output" in output
