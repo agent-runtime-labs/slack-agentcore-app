@@ -24,6 +24,8 @@ module "agent_runtime" {
   model_resource_arns             = local.model_resource_arns
   oauth2_credential_provider_name = var.linkedin_provider_name
   allowed_oauth2_return_urls      = [local.oauth_callback_url]
+  idle_session_timeout_seconds    = 300
+  max_session_lifetime_seconds    = 3600
 
   environment_variables = {
     LOG_LEVEL              = var.log_level

@@ -139,6 +139,14 @@ module "oauth_callback_fn" {
           "arn:aws:bedrock-agentcore:${var.region}:${local.account_id}:workload-identity-directory/default/*",
         ]
       },
+      {
+        # CompleteResourceTokenAuth runs as this role and reads the credential
+        # provider's OAuth2 client secret from the AgentCore-managed secret to
+        # finish the token exchange with LinkedIn.
+        Effect   = "Allow"
+        Action   = ["secretsmanager:GetSecretValue"]
+        Resource = "arn:aws:secretsmanager:${var.region}:${local.account_id}:secret:bedrock-agentcore-identity!default/oauth2/*"
+      },
     ]
   })
 }
