@@ -14,8 +14,10 @@ from strands import Agent
 from strands.models.bedrock import BedrockModel
 
 import config
+from auth_state import AuthState
 from conversations import ConversationCache
-from linkedin import AuthState, build_linkedin_tool, workload_token_provider
+from github import build_github_tool
+from linkedin import build_linkedin_tool, workload_token_provider
 
 logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO"))
 logger = logging.getLogger("slack_agent")
@@ -23,9 +25,10 @@ logger = logging.getLogger("slack_agent")
 # Wording tuned for Nova Micro: stricter phrasing made it refuse to recall earlier turns.
 SYSTEM_PROMPT = """You are a friendly, concise assistant in Slack. Answer any question briefly using Slack mrkdwn.
 Remember what the user tells you during the conversation and use it when they ask later.
-Only call get_my_linkedin_profile when the user explicitly asks about their LinkedIn profile.
-If it returns AUTHORIZATION_REQUIRED, ask them to use the private Connect LinkedIn link and ask again.
-Never make up LinkedIn details."""
+Only call get_my_linkedin_profile when the user explicitly asks about their LinkedIn profile, and only call
+use_github when the user explicitly asks about their GitHub account, repositories, issues, or pull requests.
+If either returns AUTHORIZATION_REQUIRED, ask them to use the private Connect link that was just sent to them
+and ask again. Never make up LinkedIn or GitHub details."""
 
 app = BedrockAgentCoreApp()
 model = BedrockModel(model_id=config.MODEL_ID, region_name=config.AWS_REGION, temperature=0.2, max_tokens=1024)
@@ -50,7 +53,7 @@ def invoke(payload: dict, context: RequestContext) -> dict:
     agent = Agent(
         model=model,
         system_prompt=SYSTEM_PROMPT,
-        tools=[build_linkedin_tool(get_token, auth_state)],
+        tools=[build_linkedin_tool(get_token, auth_state), build_github_tool(get_token, auth_state)],
         messages=history,
         callback_handler=None,
     )

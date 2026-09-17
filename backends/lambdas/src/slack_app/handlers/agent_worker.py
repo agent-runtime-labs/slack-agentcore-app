@@ -34,9 +34,10 @@ def process(job: dict) -> None:
 
     auth = result.get("authRequired")
     if auth:
+        provider = auth.get("provider") or "that"
         _send_connect_link(slack, job, user_id, auth)
         text = (
-            f"🔐 <@{job['user']}> I need access to your LinkedIn account first. "
+            f"🔐 <@{job['user']}> I need access to your {provider} account first. "
             "I've sent you a private link — ask me again once you've connected."
         )
     else:
@@ -46,9 +47,11 @@ def process(job: dict) -> None:
 
 
 def _send_connect_link(slack, job: dict, user_id: str, auth: dict) -> None:
+    provider = auth.get("provider") or "your account"
     pending = PendingAuth(
         nonce=new_nonce(),
         runtime_user_id=user_id,
+        provider=provider,
         session_uri=auth["sessionUri"],
         authorization_url=auth["authorizationUrl"],
         channel=job["channel"],
@@ -64,17 +67,17 @@ def _send_connect_link(slack, job: dict, user_id: str, auth: dict) -> None:
         channel=job["channel"],
         user=job["user"],
         thread_ts=job["thread_ts"],
-        text=f"Connect your LinkedIn account: {link}",
+        text=f"Connect your {provider} account: {link}",
         blocks=[
             {
                 "type": "section",
                 "text": {
                     "type": "mrkdwn",
-                    "text": "*Connect LinkedIn* — this link is just for you and expires in 10 minutes.",
+                    "text": f"*Connect {provider}* — this link is just for you and expires in 10 minutes.",
                 },
                 "accessory": {
                     "type": "button",
-                    "text": {"type": "plain_text", "text": "Connect LinkedIn"},
+                    "text": {"type": "plain_text", "text": f"Connect {provider}"},
                     "url": link,
                     "style": "primary",
                 },

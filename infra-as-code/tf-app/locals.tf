@@ -11,11 +11,15 @@ locals {
   public_base_url    = aws_apigatewayv2_api.this.api_endpoint
   oauth_callback_url = "${local.public_base_url}/oauth2/callback"
 
-  # us.amazon.nova-micro-v1:0 -> amazon.nova-micro-v1:0
-  foundation_model_id = replace(var.model_id, "/^(us|eu|apac|global)\\./", "")
-  model_resource_arns = [
-    "arn:aws:bedrock:${var.region}:${local.account_id}:inference-profile/${var.model_id}",
-    # Cross-region inference profiles route to the model in several regions.
-    "arn:aws:bedrock:*::foundation-model/${local.foundation_model_id}",
-  ]
+  # The chat model and the GitHub MCP sub-agent's model may differ (e.g. Nova Micro vs Claude
+  # Haiku), so both need to be allow-listed for the runtime's InvokeModel permission.
+  bedrock_model_ids = [var.model_id, var.github_model_id]
+  model_resource_arns = flatten([
+    for model_id in local.bedrock_model_ids : [
+      "arn:aws:bedrock:${var.region}:${local.account_id}:inference-profile/${model_id}",
+      # Cross-region inference profiles route to the model in several regions.
+      # us.amazon.nova-micro-v1:0 -> amazon.nova-micro-v1:0
+      "arn:aws:bedrock:*::foundation-model/${replace(model_id, "/^(us|eu|apac|global)\\./", "")}",
+    ]
+  ])
 }

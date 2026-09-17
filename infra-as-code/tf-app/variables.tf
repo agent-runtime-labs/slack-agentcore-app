@@ -24,10 +24,22 @@ variable "model_id" {
   default     = "us.amazon.nova-micro-v1:0"
 }
 
+variable "github_model_id" {
+  type        = string
+  description = "Bedrock model or inference profile ID for the GitHub MCP sub-agent, which needs stronger tool-use and a larger max_tokens than the low-cost chat model."
+  default     = "us.anthropic.claude-haiku-4-5-20251001-v1:0"
+}
+
 variable "linkedin_provider_name" {
   type        = string
   description = "AgentCore Identity OAuth2 credential provider (created by scripts/identity-setup.sh)"
   default     = "slack-agent-linkedin"
+}
+
+variable "github_provider_name" {
+  type        = string
+  description = "AgentCore Identity OAuth2 credential provider (created by scripts/identity-setup.sh)"
+  default     = "slack-agent-github"
 }
 
 variable "log_level" {

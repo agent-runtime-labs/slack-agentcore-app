@@ -72,7 +72,9 @@ def callback(event: dict) -> dict:
         return _page(502, "Something went wrong", "We couldn't finish connecting your account. Please try again.")
 
     _notify(pending)
-    return _page(200, "LinkedIn connected ✅", "You can close this tab and ask the bot again in Slack.", clear_cookie=True)
+    return _page(
+        200, f"{pending.provider} connected ✅", "You can close this tab and ask the bot again in Slack.", clear_cookie=True
+    )
 
 
 def _notify(pending) -> None:
@@ -81,7 +83,7 @@ def _notify(pending) -> None:
             channel=pending.channel,
             user=pending.slack_user,
             thread_ts=pending.thread_ts,
-            text="✅ LinkedIn connected. Ask me your question again.",
+            text=f"✅ {pending.provider} connected. Ask me your question again.",
         )
     except Exception:
         logger.exception("Failed to notify Slack user")

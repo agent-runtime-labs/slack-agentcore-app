@@ -21,16 +21,18 @@ module "agent_runtime" {
   image_uri          = module.agent_image.image_uri
   ecr_repository_arn = module.agent_image.repository_arn
 
-  model_resource_arns             = local.model_resource_arns
-  oauth2_credential_provider_name = var.linkedin_provider_name
-  allowed_oauth2_return_urls      = [local.oauth_callback_url]
-  idle_session_timeout_seconds    = 300
-  max_session_lifetime_seconds    = 3600
+  model_resource_arns              = local.model_resource_arns
+  oauth2_credential_provider_names = [var.linkedin_provider_name, var.github_provider_name]
+  allowed_oauth2_return_urls       = [local.oauth_callback_url]
+  idle_session_timeout_seconds     = 300
+  max_session_lifetime_seconds     = 3600
 
   environment_variables = {
     LOG_LEVEL              = var.log_level
     MODEL_ID               = var.model_id
+    GITHUB_MODEL_ID        = var.github_model_id
     LINKEDIN_PROVIDER_NAME = var.linkedin_provider_name
+    GITHUB_PROVIDER_NAME   = var.github_provider_name
     OAUTH2_RETURN_URL      = local.oauth_callback_url
   }
 }

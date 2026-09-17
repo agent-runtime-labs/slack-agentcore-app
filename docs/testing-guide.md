@@ -4,10 +4,11 @@ How to check that each part of the app works, from unit tests up to a real Slack
 
 | Level | Needs | Covers |
 |---|---|---|
-| [1. Unit tests](#1-unit-tests) | uv | Signature checks, event filtering, OAuth session binding, the LinkedIn tool |
+| [1. Unit tests](#1-unit-tests) | uv | Signature checks, event filtering, OAuth session binding, the LinkedIn and GitHub tools |
 | [2. Agent only](#2-agent-only) | Tilt running | Agent container + Bedrock (Nova Micro) |
 | [3. Chat through the Slack handlers (dry run)](#3-chat-through-the-slack-handlers-dry-run) | Tilt | The full request path, without a Slack workspace |
 | [4. LinkedIn connect flow (dry run)](#4-linkedin-connect-flow-dry-run) | Tilt + LinkedIn app + identity setup | Per-user OAuth, session binding, token isolation |
+| [4b. GitHub connect flow (dry run)](#4b-github-connect-flow-dry-run) | Tilt + GitHub app + identity setup | Same as level 4, second provider |
 | [5. Security checks](#5-negative--security-checks) | Level 4 | That bad requests are rejected |
 | [6. Real Slack, locally](#6-real-slack-locally) | Slack dev app + ngrok | Slack UI, ephemeral messages |
 | [7. Deployed to AWS](#7-deployed-to-aws) | `terraform apply` | Lambdas, SQS, DynamoDB, Runtime with `runtimeUserId` |
@@ -26,7 +27,7 @@ sequenceDiagram
     A->>A: verify signature, log chat.postMessage "Thinking…"
     A-->>T: 200 {"ok": true}
     A->>G: POST /invocations (background thread)
-    G->>B: Converse (+ Identity calls for LinkedIn questions)
+    G->>B: Converse (+ Identity calls for LinkedIn/GitHub questions)
     G-->>A: {"message", "authRequired"}
     A->>A: log chat.update (the reply)<br/>or chat.postEphemeral (connect link)
 ```
@@ -61,7 +62,7 @@ curl -s localhost:8081/healthz              # {"status":"ok"}
 make test
 ```
 
-**Expected:** `28 passed` (lambdas) and `7 passed` (agent). Tilt also runs these as the **unit-tests** resource whenever you change the source.
+**Expected:** `28 passed` (lambdas) and `11 passed` (agent). Tilt also runs these as the **unit-tests** resource whenever you change the source.
 
 | File | What it checks |
 |---|---|
@@ -70,6 +71,7 @@ make test
 | [test_oauth_callback.py](../backends/lambdas/tests/test_oauth_callback.py) | Cookie + redirect; mismatched sessions, missing cookies and replays are rejected |
 | [test_identity.py](../backends/lambdas/tests/test_identity.py) | User and session IDs are per user and per workspace |
 | [test_linkedin_tool.py](../backends/agents/slack_agent/tests/test_linkedin_tool.py) | Token found, consent needed, revoked token, local workload token fallback |
+| [test_github_tool.py](../backends/agents/slack_agent/tests/test_github_tool.py) | Same cases as the LinkedIn tool, against `api.github.com/user` |
 
 ---
 
@@ -225,6 +227,25 @@ The same applies to a different workspace: `--team TOTHER --user UALICE` is also
 
 ---
 
+## 4b. GitHub connect flow (dry run)
+
+Same flow as level 4, second independent provider. Steps 4a–4e all apply, with these substitutions:
+
+| LinkedIn (level 4) | GitHub (level 4b) |
+|---|---|
+| `LINKEDIN_CLIENT_ID` / `LINKEDIN_CLIENT_SECRET` ([linkedin-setup.md](linkedin-setup.md)) | `GITHUB_CLIENT_ID` / `GITHUB_CLIENT_SECRET` ([github-setup.md](github-setup.md)) |
+| `make identity` | `make identity-github` |
+| "What is my LinkedIn name?" | "What is my GitHub username?" |
+| `get_my_linkedin_profile` tool, provider `slack-agent-linkedin` | `get_my_github_profile` tool, provider `slack-agent-github` |
+| "Connect LinkedIn" button / "LinkedIn connected ✅" | "Connect GitHub" button / "GitHub connected ✅" |
+| Revoke at LinkedIn → Settings → Data privacy → Permitted services | Revoke at GitHub → Settings → Applications → Authorized OAuth Apps |
+
+`make local-workload` and the allow-listed return URL are shared — no separate setup needed there (see [github-setup.md](github-setup.md#4-allow-list-your-apps-return-url)).
+
+A good check that the two providers are properly isolated: ask both LinkedIn and GitHub questions in the same thread as the same user. Each triggers its own consent link (different `nonce`, different `provider` in the pending record), and connecting one doesn't connect the other.
+
+---
+
 ## 5. Negative / security checks
 
 Run these after 4a, so a pending link exists.
@@ -258,6 +279,7 @@ Setup: [slack-setup.md](slack-setup.md). Create a **dev** Slack app, set `SLACK_
 | 6f | Click the button, consent, then ask again | "LinkedIn connected ✅" in the browser and in Slack; then your name |
 | 6g | Ask a teammate to try 6e | They get their own button; they never see your data |
 | 6h | Edit a message you sent to the bot | No new reply (edits are ignored) |
+| 6i | `@AgentCore Assistant what's my GitHub username?` (needs `make identity-github`, [github-setup.md](github-setup.md)) | Same as 6e/6f, with "Connect GitHub" / "GitHub connected ✅" |
 
 The ngrok inspector at <http://localhost:4040> shows every request Slack sent and how the app responded. It's useful when a message doesn't get a reply.
 
@@ -267,7 +289,7 @@ The ngrok inspector at <http://localhost:4040> shows every request Slack sent an
 
 Setup: [deployment.md](deployment.md). Use a **separate** Slack app pointed at the `slack_events_url` output.
 
-Repeat tests 6a–6h in that Slack app, then check the AWS side:
+Repeat tests 6a–6i in that Slack app, then check the AWS side:
 
 ```bash
 cd infra-as-code
@@ -294,9 +316,9 @@ aws dynamodb scan --table-name $PREFIX-pending-oauth --select COUNT
 
 | # | Check | Expected |
 |---|---|---|
-| 7a | The runtime log for a LinkedIn question | No `No workload access token` error. The Runtime got the token for the user from `runtimeUserId`, with no local fallback. |
+| 7a | The runtime log for a LinkedIn or GitHub question | No `No workload access token` error. The Runtime got the token for the user from `runtimeUserId`, with no local fallback. |
 | 7b | Callback URL | `https://<api>.execute-api.<region>.amazonaws.com/oauth2/callback`, and the cookie has the `Secure` flag |
-| 7c | Invoke the runtime directly **without** `runtimeUserId` (AWS CLI) and ask about LinkedIn | No profile data is returned (the tool reports an error): a LinkedIn token can't be used without a user identity |
+| 7c | Invoke the runtime directly **without** `runtimeUserId` (AWS CLI) and ask about LinkedIn or GitHub | No profile data is returned (the tool reports an error): a token can't be used without a user identity |
 | 7d | API throttling: send a burst of more than 40 requests per second to `/slack/events` | Some get `429` |
 | 7e | DLQ after the tests | `0` |
 

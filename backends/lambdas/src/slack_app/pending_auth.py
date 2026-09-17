@@ -2,8 +2,8 @@
 
 Flow: the worker stores a record under a random nonce and DMs the user a link to
 /oauth2/start?nonce=...; /oauth2/start drops the nonce into a cookie and redirects
-to LinkedIn; /oauth2/callback reads the cookie back and checks the session URI
-before completing the token exchange. The nonce is single-use.
+to the provider (LinkedIn, GitHub, ...); /oauth2/callback reads the cookie back and
+checks the session URI before completing the token exchange. The nonce is single-use.
 """
 
 import os
@@ -24,6 +24,7 @@ TTL_SECONDS = 600
 class PendingAuth:
     nonce: str
     runtime_user_id: str
+    provider: str
     session_uri: str
     authorization_url: str
     channel: str

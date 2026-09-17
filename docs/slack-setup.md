@@ -73,10 +73,10 @@ After changing scopes or events, Slack asks you to **reinstall** the app. Do it,
 
 ## 5. Use it
 
-- **Channel:** `/invite @AgentCore Assistant`, then `@AgentCore Assistant what's my LinkedIn name?`
+- **Channel:** `/invite @AgentCore Assistant`, then `@AgentCore Assistant what's my LinkedIn name?` (or `what's my GitHub username?`, see [github-setup.md](github-setup.md))
 - **DM:** open the app under *Apps* and message it directly.
 
-Each reply appears in a thread. The first time a person asks about LinkedIn, they get a **private** "Connect LinkedIn" button that nobody else in the channel can see. After connecting, they ask again.
+Each reply appears in a thread. The first time a person asks about LinkedIn or GitHub, they get a **private** "Connect LinkedIn"/"Connect GitHub" button that nobody else in the channel can see. After connecting, they ask again.
 
 ## Behaviour notes
 

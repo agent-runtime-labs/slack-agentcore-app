@@ -10,20 +10,21 @@
 | Tiltfile error at `aws configure export-credentials` | Profile missing or SSO session expired | `aws sso login --profile …`, or fix `AWS_PROFILE` in `.env`. |
 | `ExpiredTokenException` after a while | The Kubernetes Secret holds short-lived credentials | Restart Tilt. |
 | `AccessDeniedException … GetWorkloadAccessTokenForUserId … Workload Identity does not belong to caller account` | The local workload identity doesn't exist yet (or is in another region or account) | `make local-workload`, with the same `AWS_REGION` as in `.env`. |
-| `ResourceNotFoundException` for the credential provider | The provider wasn't created, or its name differs | `make identity`; check `LINKEDIN_PROVIDER_NAME`. |
+| `ResourceNotFoundException` for the credential provider | The provider wasn't created, or its name differs | `make identity` (LinkedIn) or `make identity-github` (GitHub); check `LINKEDIN_PROVIDER_NAME` / `GITHUB_PROVIDER_NAME`. |
 | Browser shows *"Link expired"* after consent locally | `slack-app` reloaded (code change), which cleared the in-memory store | Ask the bot again for a new link. |
 | `send-test-mention` returns 401 | Signing secret mismatch | The script and the pod both read `SLACK_SIGNING_SECRET`; restart Tilt after changing `.env`. |
 | `docker buildx` fails with `/var/run/docker.sock` | buildx is pointing at the `default` builder | `docker buildx use rancher-desktop` (or your engine's builder). |
 
-## LinkedIn / AgentCore Identity
+## LinkedIn / GitHub / AgentCore Identity
 
 | Symptom | Cause | Fix |
 |---|---|---|
 | LinkedIn shows *"The redirect_uri does not match"* | The AgentCore callback URL isn't registered in LinkedIn | `./infra-as-code/scripts/identity-setup.sh show`, then add the URL under LinkedIn → Auth. |
 | LinkedIn shows *"unauthorized_scope_error"* | The OpenID Connect product isn't enabled | Request **Sign In with LinkedIn using OpenID Connect** under Products. |
-| AgentCore error about the return URL | `/oauth2/callback` isn't allow-listed on the workload identity | Local: `make local-workload`. AWS: `terraform apply` (re-runs `allowed_return_urls`). |
+| GitHub shows *"The redirect_uri MUST match the registered callback URL"* | The AgentCore callback URL isn't registered on the GitHub OAuth App | `./infra-as-code/scripts/identity-setup.sh show`, then set it as the app's **Authorization callback URL**. |
+| AgentCore error about the return URL | `/oauth2/callback` isn't allow-listed on the workload identity | Local: `make local-workload`. AWS: `terraform apply` (re-runs `allowed_return_urls`). This allow-list is shared by both providers — one fix covers LinkedIn and GitHub. |
 | *"Sign-in not recognised"* page | The browser doing consent isn't the one that opened the link, or cookies are blocked | Open the Slack link and finish consent in the same browser. Allow cookies for the API domain. |
-| The bot asks to connect again every time | Consent never completed (callback not reached) | Check the `oauth-callback` logs. The user must land on "LinkedIn connected ✅". |
+| The bot asks to connect again every time | Consent never completed (callback not reached) | Check the `oauth-callback` logs. The user must land on "LinkedIn connected ✅" or "GitHub connected ✅". |
 
 ## AWS
 
@@ -32,6 +33,8 @@
 | Slack says *"Your URL didn't respond with the value of the challenge parameter"* | The Slack secret is still empty, so signature checks fail | Run `put-slack-secret.sh`, then retry verification. |
 | Bot shows "🤔 Thinking…" forever | The worker failed before it could update the message | `aws logs tail /aws/lambda/<prefix>-agent-worker`; check the DLQ (`processing_dlq_url` output). |
 | `AccessDeniedException` on `InvokeAgentRuntime` | Missing `InvokeAgentRuntimeForUser` permission | Both actions are required when `runtimeUserId` is set; see [lambdas.tf](../infra-as-code/tf-app/lambdas.tf). |
+| `oauth-callback` returns *"Something went wrong"*; logs show `AccessDeniedException ... CompleteResourceTokenAuth ... Access denied when retrieving secret 'bedrock-agentcore-identity!default/oauth2/<provider>-...'` | `CompleteResourceTokenAuth` runs as the calling Lambda's IAM role, and that role needs `secretsmanager:GetSecretValue` on the AgentCore-managed secret to finish the token exchange — a permission distinct from `bedrock-agentcore:CompleteResourceTokenAuth` itself | Grant `secretsmanager:GetSecretValue` on `arn:aws:secretsmanager:<region>:<account>:secret:bedrock-agentcore-identity!default/oauth2/*` to the `oauth-callback` Lambda's role (see [lambdas.tf](../infra-as-code/tf-app/lambdas.tf)); this is already wired in, but re-check it after adding a third provider. |
+| Runtime logs show `AccessDeniedException` on `GetResourceOauth2Token` for a newly added provider (e.g. GitHub) | The Runtime execution role's IAM policy only listed the old provider name(s) | Confirm `oauth2_credential_provider_names` in [agent-runtime.tf](../infra-as-code/tf-app/agent-runtime.tf) includes the new provider, then `terraform apply`. |
 | Runtime logs show `AccessDenied` for `bedrock:InvokeModel` | The model ID changed without updating IAM, or model access isn't enabled | Apply Terraform again; enable model access in the Bedrock console. |
 | Lambda create fails: *image manifest … not supported* | The image was pushed with attestations | The build script uses `--provenance=false --sbom=false`; rebuild with it. |
 | Duplicate answers | Slack retries, or SQS redelivery after a timeout | Retries are ignored by design; make sure the worker timeout (150s) is below the queue visibility timeout (900s). |

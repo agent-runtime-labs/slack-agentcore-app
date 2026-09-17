@@ -11,7 +11,7 @@
 | Slack path | HTTP API (`POST /slack/events`, `GET /oauth2/start`, `GET /oauth2/callback`) with throttling and access logs; 3 Lambdas; SQS FIFO queue and DLQ |
 | State | DynamoDB `pending-oauth` table (TTL); an empty Secrets Manager secret for Slack credentials |
 
-Not managed by Terraform (see [linkedin-setup.md](linkedin-setup.md)): the LinkedIn OAuth2 credential provider.
+Not managed by Terraform: the LinkedIn and GitHub OAuth2 credential providers (see [linkedin-setup.md](linkedin-setup.md) and [github-setup.md](github-setup.md)).
 
 ## Prerequisites
 
@@ -32,7 +32,7 @@ region       = "us-east-1"
 use_lockfile = true      # S3-native locking, no DynamoDB table needed
 ```
 
-Review [app-infra-params.tfvars](../infra-as-code/tf-vars/dev/app-infra-params.tfvars). `linkedin_provider_name` must match the provider you created.
+Review [app-infra-params.tfvars](../infra-as-code/tf-vars/dev/app-infra-params.tfvars). `linkedin_provider_name` and `github_provider_name` must match the providers you created.
 
 ### 2. Deploy
 
@@ -64,7 +64,8 @@ Set that URL as the Request URL of your **AWS** Slack app ([slack-setup.md](slac
 
 1. DM the bot `hello`. You should get an answer within a few seconds.
 2. Ask `what's my LinkedIn name?`. You should get a private **Connect LinkedIn** button; connect, then ask again.
-3. Check the logs:
+3. Ask `what's my GitHub username?`. Same flow, with a **Connect GitHub** button.
+4. Check the logs:
    ```bash
    aws logs tail /aws/lambda/slack-agentcore-dev-agent-worker --follow
    aws logs tail /aws/bedrock-agentcore/runtimes/<runtime-id>-DEFAULT --follow
@@ -86,17 +87,17 @@ Copy `tf-vars/dev` to `tf-vars/prod`, change `env`, the backend `key`, and the t
 ./tf-wrapper.sh dev destroy
 ```
 
-The ECR repositories are force-deleted. The Slack secret is deleted immediately in `dev`; in `prod` it has a 30-day recovery window. The LinkedIn credential provider and the local workload identity are left in place; see [getting-started.md](getting-started.md#8-stop) to delete them.
+The ECR repositories are force-deleted. The Slack secret is deleted immediately in `dev`; in `prod` it has a 30-day recovery window. The LinkedIn and GitHub credential providers and the local workload identity are left in place; see [getting-started.md](getting-started.md#8-stop) to delete them.
 
 ## Cost notes (us-east-1, light usage)
 
 | Item | Driver |
 |---|---|
 | Nova Micro | $0.035 per 1M input tokens / $0.14 per 1M output tokens: a few cents for hundreds of messages. |
-| AgentCore Runtime | Billed per second of CPU and memory while a session is active. Sessions idle out after 15 min (`idle_session_timeout_seconds`). |
+| AgentCore Runtime | Billed per second of CPU and memory while a session is active. Sessions idle out after 5 min (`idle_session_timeout_seconds = 300`) and are hard-capped at 1 hour (`max_session_lifetime_seconds = 3600`). |
 | Lambda, API Gateway, SQS, DynamoDB | Pay-per-request; effectively free-tier at sandbox volume. |
 | ECR | Storage for up to 10 images per repository. |
-| Secrets Manager | $0.40/month per secret: the Slack secret plus the LinkedIn client secret created by AgentCore Identity. |
+| Secrets Manager | $0.40/month per secret: the Slack secret plus the LinkedIn and GitHub client secrets created by AgentCore Identity. |
 | CloudWatch Logs | 30-day retention. |
 
 Check current prices on the AWS pricing pages before relying on these.

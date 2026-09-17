@@ -9,7 +9,6 @@ import json
 import logging
 import urllib.error
 import urllib.request
-from dataclasses import dataclass
 from functools import lru_cache
 from typing import Callable
 
@@ -17,6 +16,7 @@ import boto3
 from strands import tool
 
 import config
+from auth_state import AuthState
 
 logger = logging.getLogger(__name__)
 
@@ -26,19 +26,6 @@ AUTH_REQUIRED_MESSAGE = (
     "AUTHORIZATION_REQUIRED: the user has not connected LinkedIn yet. A private connect link "
     "has been sent to them. Tell them to connect and then ask again. Do not guess profile data."
 )
-
-
-@dataclass
-class AuthState:
-    """Collects a pending consent request during one invocation."""
-
-    authorization_url: str | None = None
-    session_uri: str | None = None
-
-    def as_dict(self) -> dict | None:
-        if not self.authorization_url:
-            return None
-        return {"authorizationUrl": self.authorization_url, "sessionUri": self.session_uri}
 
 
 @lru_cache(maxsize=1)
@@ -104,6 +91,7 @@ def build_linkedin_tool(get_workload_token: Callable[[], str], auth_state: AuthS
                 token = fetch_token(workload_token, force=True)
 
             if token.get("authorizationUrl"):
+                auth_state.provider = "LinkedIn"
                 auth_state.authorization_url = token["authorizationUrl"]
                 auth_state.session_uri = token.get("sessionUri")
                 return AUTH_REQUIRED_MESSAGE
