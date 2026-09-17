@@ -1,6 +1,9 @@
 # Architecture
 
-A Slack bot backed by an agent on **Amazon Bedrock AgentCore Runtime** (Strands Agents + Amazon Nova Micro). The agent can read **each Slack user's own LinkedIn and GitHub profile** through **AgentCore Identity** (OAuth2 authorization code grant) — two independent credential providers, same pattern for both.
+A Slack bot backed by an agent on **Amazon Bedrock AgentCore Runtime** (Strands Agents + Amazon Nova Micro). The agent reaches **each Slack user's own LinkedIn and GitHub accounts** through **AgentCore Identity** (OAuth2 authorization code grant) — two independent credential providers, same consent pattern for both. What happens *after* consent differs:
+
+- **LinkedIn** — the agent calls LinkedIn's REST API (`GET /v2/userinfo`) directly with the vaulted token.
+- **GitHub** — the agent hands the vaulted token to **GitHub's own public remote MCP server** (`api.githubcopilot.com/mcp/`) and runs a small nested Strands agent (**Claude Haiku 4.5**) against its tool catalog, so it can act on issues, pull requests, repos, and org membership, not just read a profile. See [github-setup.md](github-setup.md).
 
 It follows the pattern from the AWS blog post [Integrating Amazon Bedrock AgentCore with Slack](https://aws.amazon.com/blogs/machine-learning/integrating-amazon-bedrock-agentcore-with-slack/): an API Gateway webhook, a queue, and an async worker. It adds per-user outbound OAuth on top.
 
@@ -26,21 +29,24 @@ flowchart LR
             ID["Identity<br/>workload identity +<br/>token vault"]
         end
 
-        BR["Bedrock<br/>Nova Micro"]
+        BR["Bedrock<br/>Nova Micro<br/>(chat loop)"]
+        BR2["Bedrock<br/>Claude Haiku 4.5<br/>(use_github tool only)"]
         ECR[("ECR<br/>images")]
     end
 
-    LI["LinkedIn<br/>OAuth + /v2/userinfo"]
-    GH["GitHub<br/>OAuth + /user"]
+    LI["LinkedIn<br/>OAuth + REST /v2/userinfo"]
+    GH["GitHub<br/>OAuth consent<br/>(github.com)"]
+    GHMCP["GitHub Remote MCP Server<br/>api.githubcopilot.com/mcp/"]
 
     U -- "@mention / DM" --> APIGW
     APIGW -- "POST /slack/events" --> EV
     EV --> Q --> WK
     WK -- "InvokeAgentRuntime<br/>runtimeUserId=slack-T-U" --> RT
     RT --> BR
+    RT -. "use_github tool only" .-> BR2
     RT -- "GetResourceOauth2Token" --> ID
-    RT -- "Bearer token" --> LI
-    RT -- "Bearer token" --> GH
+    RT -- "get_my_linkedin_profile:<br/>Bearer token (REST)" --> LI
+    RT -- "use_github:<br/>Bearer token (MCP)" --> GHMCP
     WK -- "pending record" --> DDB
     WK -- "reply / private connect link" --> U
     U -. "browser" .-> APIGW
@@ -58,8 +64,11 @@ flowchart LR
 | `slack-events` Lambda | [backends/lambdas/src/slack_app/handlers/slack_events.py](../backends/lambdas/src/slack_app/handlers/slack_events.py) | Checks the Slack signature, ignores bot messages and retries, posts "🤔 Thinking…", and queues the job. |
 | `agent-worker` Lambda | [handlers/agent_worker.py](../backends/lambdas/src/slack_app/handlers/agent_worker.py) | Invokes the Runtime **as the Slack user**, then either posts the answer or sends a private "Connect LinkedIn"/"Connect GitHub" link, depending on which provider the tool needed. |
 | `oauth-callback` Lambda | [handlers/oauth_callback.py](../backends/lambdas/src/slack_app/handlers/oauth_callback.py) | Binds the OAuth session to the user's browser and completes the token exchange. Provider-agnostic — reads `pending.provider` for the confirmation page/message. |
-| Agent | [backends/agents/slack_agent/src](../backends/agents/slack_agent/src) | Strands agent with two tools, `get_my_linkedin_profile` and `get_my_github_profile`, sharing one `AuthState` side-channel ([auth_state.py](../backends/agents/slack_agent/src/auth_state.py)). |
-| Infrastructure | [infra-as-code/tf-app](../infra-as-code/tf-app) | Terraform for everything above. |
+| Agent — LinkedIn tool | [linkedin.py](../backends/agents/slack_agent/src/linkedin.py) | `get_my_linkedin_profile`: fetches the vaulted token, calls LinkedIn's REST API directly, returns JSON. Runs inline in the main `Agent` (Nova Micro). |
+| Agent — GitHub tool | [github.py](../backends/agents/slack_agent/src/github.py) | `use_github(request)`: fetches the vaulted token, opens an MCP session to GitHub's remote MCP server with it as the Bearer credential, and hands the server's full tool catalog to a **nested** Strands agent (Claude Haiku, `GITHUB_MODEL_ID`) that chains whatever calls the request needs (e.g. `get_me` → `search_repositories`). |
+| Agent — shared state | [auth_state.py](../backends/agents/slack_agent/src/auth_state.py) | `AuthState`: one side-channel both tools write to when consent is needed, read back by `main.py` after the agent loop. |
+| GitHub Remote MCP Server | External (owned by GitHub) | Hosted MCP server exposing GitHub's tool catalog (repos, issues, PRs, code search, orgs, ...) over streamable HTTP, authenticated per-request by whatever Bearer token it's given — here, the Slack user's own vaulted OAuth2 token. No AgentCore Gateway involved. |
+| Infrastructure | [infra-as-code/tf-app](../infra-as-code/tf-app) | Terraform for everything above, including the IAM allow-list for **both** Bedrock models ([locals.tf](../infra-as-code/tf-app/locals.tf)). |
 
 ## Request flow: a normal question
 
@@ -124,7 +133,37 @@ sequenceDiagram
 
 Bob asks the same question in the same channel. His request carries `runtimeUserId=slack-T1-UBOB`, so the token vault lookup misses Alice's token, and Bob gets his own consent link. See [identity-and-security.md](identity-and-security.md) for details.
 
-**GitHub follows the identical sequence** — swap `get_my_linkedin_profile` for `get_my_github_profile`, `slack-agent-linkedin` for `slack-agent-github`, and `GET /v2/userinfo` for `GET /user`. Both tools share the same `/oauth2/start` and `/oauth2/callback` endpoints, the same session-binding logic, and the same DynamoDB `pending-oauth` table; only the provider name travels with the pending record (`PendingAuth.provider`) so the confirmation page and Slack message name the right service. See [github-setup.md](github-setup.md).
+**GitHub's consent flow is identical** — swap `slack-agent-linkedin` for `slack-agent-github` and LinkedIn's authorization/token endpoints for GitHub's. Both providers share the same `/oauth2/start` and `/oauth2/callback` endpoints, the same session-binding logic, and the same DynamoDB `pending-oauth` table; only the provider name travels with the pending record (`PendingAuth.provider`) so the confirmation page and Slack message name the right service. See [github-setup.md](github-setup.md).
+
+**What happens after consent is not identical.** LinkedIn's tool calls `GET /v2/userinfo` directly and returns. GitHub's tool (`use_github`) hands the same vaulted token to GitHub's remote MCP server and delegates to a nested agent that can chain several tool calls before answering:
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor A as Alice (Slack)
+    participant W as λ agent-worker
+    participant R as Runtime<br/>(Nova Micro, use_github tool)
+    participant I as AgentCore Identity
+    participant G as nested GitHub agent<br/>(Claude Haiku)
+    participant MCP as GitHub Remote MCP Server
+
+    A->>W: @bot list my open pull requests
+    W->>R: InvokeAgentRuntime(runtimeUserId=slack-T1-UALICE)
+    R->>I: GetResourceOauth2Token(scopes=repo,read:user,read:org)
+    I-->>R: accessToken (already connected)
+    R->>G: use_github("list my open pull requests")
+    G->>MCP: initialize + tools/list (Bearer accessToken)
+    MCP-->>G: tool catalog (get_me, search_pull_requests, ...)
+    G->>MCP: tools/call get_me
+    MCP-->>G: {"login": "alice"}
+    G->>MCP: tools/call search_pull_requests(query="author:alice is:open")
+    MCP-->>G: matching pull requests
+    G-->>R: summarized answer text
+    R-->>W: {"message": "...", "authRequired": null}
+    W->>A: chat.update (replace placeholder)
+```
+
+`use_github` stays a single, lazily-invoked tool from the outer agent's point of view — the outer Nova Micro agent never sees GitHub's dozens of MCP tool schemas, only the one `use_github(request)` tool and its text result. The nested Claude Haiku agent sees the full MCP catalog and decides which of its tools to chain; it is created fresh per call and torn down when the tool returns, so nothing about it is held between Slack messages.
 
 ## Local architecture (Tilt)
 
@@ -154,7 +193,9 @@ What changes locally, and why:
 
 ## Design choices
 
-- **No AgentCore Gateway.** Per-user OAuth through Gateway needs a per-user *inbound JWT*, which means an IdP login for every Slack user. Calling the Runtime with IAM plus `runtimeUserId` gives the same per-user token isolation with far fewer moving parts. This is why GitHub was added as a second direct AgentCore Identity credential provider (like LinkedIn) rather than as a Gateway MCP target — see [github-setup.md](github-setup.md). [identity-and-security.md](identity-and-security.md) covers when to add Gateway.
+- **No AgentCore Gateway.** Per-user OAuth through Gateway needs a per-user *inbound JWT*, which means an IdP login for every Slack user. Calling the Runtime with IAM plus `runtimeUserId` gives the same per-user token isolation with far fewer moving parts. This is why GitHub's OAuth still goes through a second direct AgentCore Identity credential provider (like LinkedIn) rather than a Gateway-fronted target — see [github-setup.md](github-setup.md). [identity-and-security.md](identity-and-security.md) covers when to add Gateway.
+- **GitHub's remote MCP server is called directly, not through Gateway.** Gateway is for *hosting* MCP tools behind your own inbound endpoint; here the agent is an outbound MCP *client* of a server GitHub already runs publicly. The only AWS-side piece is the vaulted Bearer token — no Gateway target, no extra infra.
+- **A nested agent, not a top-level tool list, for GitHub.** The remote MCP server exposes dozens of tools with verbose schemas. Loading them all into the main agent's tool list would cost a token-vault round trip and a schema dump on *every* Slack message, GitHub-related or not. Instead the main agent sees one lazy tool, `use_github(request)`, and only pays that cost — and only spins up the nested agent — when a user actually asks a GitHub question.
 - **No AgentCore Memory.** Each Runtime session is a dedicated microVM that lives until it idles out (`idle_session_timeout_seconds = 300`, 5 minutes) or hits its hard cap (`max_session_lifetime_seconds = 3600`, 1 hour), whichever comes first — see [agent-runtime.tf](../infra-as-code/tf-app/agent-runtime.tf). An in-process cache keyed by session ID gives multi-turn memory inside a thread. Switch to AgentCore Memory if history must outlive the session.
 - **One Lambda image, three handlers.** A single build is shared, and `image_config.command` selects the handler. The same code runs locally.
-- **Nova Micro** (`us.amazon.nova-micro-v1:0`) is the lowest-cost Bedrock text model that supports tool use. Change it with `model_id` / `MODEL_ID`.
+- **Two Bedrock models, chosen per job.** **Nova Micro** (`us.amazon.nova-micro-v1:0`, `MODEL_ID`) drives the main chat loop — the lowest-cost model that supports tool use, fine for short, single-tool-call replies. **Claude Haiku 4.5** (`us.anthropic.claude-haiku-4-5-20251001-v1:0`, `GITHUB_MODEL_ID`) drives the nested GitHub agent only — chaining calls through GitHub's large tool catalog (e.g. `get_me` → `search_repositories`) needs more capable tool-use than Nova Micro reliably gave; it was also hitting `MaxTokensReachedException` on that path at Nova Micro's 1024-token budget, so the GitHub agent gets its own model *and* its own larger budget (4096). The IAM policy allow-lists both models' inference-profile and foundation-model ARNs — see [locals.tf](../infra-as-code/tf-app/locals.tf).

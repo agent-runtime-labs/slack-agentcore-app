@@ -63,7 +63,7 @@ The unit tests in [test_oauth_callback.py](../backends/lambdas/tests/test_oauth_
 | Slack tokens in Secrets Manager, never in Terraform state | `aws_secretsmanager_secret.slack` + `put-slack-secret.sh` |
 | LinkedIn and GitHub client secrets never in Terraform state or on the command line | `identity-setup.sh` (temp file, mode 600) |
 | Least-privilege roles: one per Lambda, scoped to its queue, table, secret, or runtime | [lambdas.tf](../infra-as-code/tf-app/lambdas.tf) |
-| Runtime role limited to one model and its credential providers (`oauth2_credential_provider_names`) | [agentcore-runtime/iam.tf](../infra-as-code/tf-modules/aws/agentcore-runtime/iam.tf) |
+| Runtime role limited to its two allow-listed models (chat + GitHub sub-agent) and its credential providers (`oauth2_credential_provider_names`) | [agentcore-runtime/iam.tf](../infra-as-code/tf-modules/aws/agentcore-runtime/iam.tf), [tf-app/locals.tf](../infra-as-code/tf-app/locals.tf) |
 | API throttling (20 rps steady, 40 burst by default) | `aws_apigatewayv2_stage.default` |
 | Access logs without query strings (the nonce stays out of logs) | same |
 | Encryption at rest | SQS SSE, DynamoDB SSE, ECR AES256 |
