@@ -2,7 +2,10 @@
 # AgentCore Identity resources that Terraform can't manage well:
 #   - the LinkedIn OAuth2 credential provider (built-in LinkedinOauth2 vendor;
 #     keeps the client secret out of Terraform state)
-#   - the GitHub OAuth2 credential provider (built-in GithubOauth2 vendor)
+#   - the GitHub OAuth2 credential provider (built-in GithubOauth2 vendor).
+#     GITHUB_CLIENT_ID/SECRET must be a GitHub App's user-to-server OAuth
+#     credentials (see docs/github-setup.md), not a classic OAuth App's -- the
+#     endpoints are identical, only the app registration differs.
 #   - a workload identity for local development (Tilt)
 #
 # Usage:
@@ -101,7 +104,7 @@ show_github_provider() {
   callback="$(cli get-oauth2-credential-provider --name "${GITHUB_PROVIDER_NAME}" --query callbackUrl --output text)"
   echo
   echo "Credential provider: ${GITHUB_PROVIDER_NAME}"
-  echo "Add this to GitHub OAuth App > Authorization callback URL:"
+  echo "Add this to your GitHub App > General > Callback URL:"
   echo "  ${callback}"
 }
 

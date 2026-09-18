@@ -21,7 +21,8 @@
 |---|---|---|
 | LinkedIn shows *"The redirect_uri does not match"* | The AgentCore callback URL isn't registered in LinkedIn | `./infra-as-code/scripts/identity-setup.sh show`, then add the URL under LinkedIn → Auth. |
 | LinkedIn shows *"unauthorized_scope_error"* | The OpenID Connect product isn't enabled | Request **Sign In with LinkedIn using OpenID Connect** under Products. |
-| GitHub shows *"The redirect_uri MUST match the registered callback URL"* | The AgentCore callback URL isn't registered on the GitHub OAuth App | `./infra-as-code/scripts/identity-setup.sh show`, then set it as the app's **Authorization callback URL**. |
+| GitHub shows *"The redirect_uri MUST match the registered callback URL"* | The AgentCore callback URL isn't registered on the GitHub App | `./infra-as-code/scripts/identity-setup.sh show`, then set it as the app's **Callback URL** (General settings). |
+| GitHub shows *"This GitHub App is not installed on your account/organization"* or the bot can't see a repo/org | The org owner hasn't installed the GitHub App yet | Have an org owner install it from `https://github.com/apps/<app-slug>` — see [github-setup.md](github-setup.md#4-install-the-app-on-each-organization). |
 | AgentCore error about the return URL | `/oauth2/callback` isn't allow-listed on the workload identity | Local: `make local-workload`. AWS: `terraform apply` (re-runs `allowed_return_urls`). This allow-list is shared by both providers — one fix covers LinkedIn and GitHub. |
 | *"Sign-in not recognised"* page | The browser doing consent isn't the one that opened the link, or cookies are blocked | Open the Slack link and finish consent in the same browser. Allow cookies for the API domain. |
 | The bot asks to connect again every time | Consent never completed (callback not reached) | Check the `oauth-callback` logs. The user must land on "LinkedIn connected ✅" or "GitHub connected ✅". |
