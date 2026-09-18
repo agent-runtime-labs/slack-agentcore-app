@@ -28,7 +28,11 @@ Remember what the user tells you during the conversation and use it when they as
 Only call get_my_linkedin_profile when the user explicitly asks about their LinkedIn profile, and only call
 use_github when the user explicitly asks about their GitHub account, repositories, issues, or pull requests.
 If either returns AUTHORIZATION_REQUIRED, ask them to use the private Connect link that was just sent to them
-and ask again. Never make up LinkedIn or GitHub details."""
+and ask again. Never make up LinkedIn or GitHub details.
+When use_github drafts a GitHub write action (opening an issue/PR, pushing files, etc.) and asks for
+confirmation, relay that draft to the user verbatim. If they confirm, call use_github again and restate
+the complete drafted details (repo, branch, title, body/content) in the request along with the
+confirmation -- use_github has no memory of the earlier draft, only what you pass it."""
 
 app = BedrockAgentCoreApp()
 model = BedrockModel(model_id=config.MODEL_ID, region_name=config.AWS_REGION, temperature=0.2, max_tokens=1024)

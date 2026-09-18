@@ -149,7 +149,7 @@ sequenceDiagram
 
     A->>W: @bot list my open pull requests
     W->>R: InvokeAgentRuntime(runtimeUserId=slack-T1-UALICE)
-    R->>I: GetResourceOauth2Token(scopes=repo,read:user,read:org)
+    R->>I: GetResourceOauth2Token(USER_FEDERATION)
     I-->>R: accessToken (already connected)
     R->>G: use_github("list my open pull requests")
     G->>MCP: initialize + tools/list (Bearer accessToken)
@@ -195,6 +195,7 @@ What changes locally, and why:
 
 - **No AgentCore Gateway.** Per-user OAuth through Gateway needs a per-user *inbound JWT*, which means an IdP login for every Slack user. Calling the Runtime with IAM plus `runtimeUserId` gives the same per-user token isolation with far fewer moving parts. This is why GitHub's OAuth still goes through a second direct AgentCore Identity credential provider (like LinkedIn) rather than a Gateway-fronted target — see [github-setup.md](github-setup.md). [identity-and-security.md](identity-and-security.md) covers when to add Gateway.
 - **GitHub's remote MCP server is called directly, not through Gateway.** Gateway is for *hosting* MCP tools behind your own inbound endpoint; here the agent is an outbound MCP *client* of a server GitHub already runs publicly. The only AWS-side piece is the vaulted Bearer token — no Gateway target, no extra infra.
+- **The GitHub credential is a GitHub App (user-to-server tokens), not a classic OAuth App.** From AgentCore Identity's point of view the two look identical — same `GithubOauth2` vendor, same authorization-code + session-binding flow — only the app registration and its owning account differ. This matters at GitHub Enterprise Managed Users (EMU) scale: a GitHub App is adopted per organization by installing it (one owner action, EMU-friendly), instead of a classic OAuth App's per-org **OAuth App access restrictions** approval, which some EMU policies block entirely for externally-owned apps. See [github-setup.md](github-setup.md).
 - **A nested agent, not a top-level tool list, for GitHub.** The remote MCP server exposes dozens of tools with verbose schemas. Loading them all into the main agent's tool list would cost a token-vault round trip and a schema dump on *every* Slack message, GitHub-related or not. Instead the main agent sees one lazy tool, `use_github(request)`, and only pays that cost — and only spins up the nested agent — when a user actually asks a GitHub question.
 - **No AgentCore Memory.** Each Runtime session is a dedicated microVM that lives until it idles out (`idle_session_timeout_seconds = 300`, 5 minutes) or hits its hard cap (`max_session_lifetime_seconds = 3600`, 1 hour), whichever comes first — see [agent-runtime.tf](../infra-as-code/tf-app/agent-runtime.tf). An in-process cache keyed by session ID gives multi-turn memory inside a thread. Switch to AgentCore Memory if history must outlive the session.
 - **One Lambda image, three handlers.** A single build is shared, and `image_config.command` selects the handler. The same code runs locally.

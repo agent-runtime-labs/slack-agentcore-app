@@ -34,7 +34,7 @@ cp .env.tmpl .env
 Edit `.env`:
 - `AWS_PROFILE` / `AWS_REGION`: the profile and region to use.
 - `LINKEDIN_CLIENT_ID` / `LINKEDIN_CLIENT_SECRET`: from your LinkedIn developer app (see [linkedin-setup.md](linkedin-setup.md)).
-- `GITHUB_CLIENT_ID` / `GITHUB_CLIENT_SECRET`: optional, from a GitHub OAuth App (see [github-setup.md](github-setup.md)). Skip if you only want the LinkedIn tool.
+- `GITHUB_CLIENT_ID` / `GITHUB_CLIENT_SECRET`: optional, from a GitHub App (see [github-setup.md](github-setup.md)). Skip if you only want the LinkedIn tool.
 - Leave `SLACK_DRY_RUN=true` for now. You don't need a Slack workspace yet.
 
 `.env` is git-ignored. Never commit it.
@@ -52,8 +52,8 @@ make identity
 
 # GitHub OAuth2 credential provider (optional, built-in GitHub vendor)
 make identity-github
-# -> same idea: add the printed URL to your GitHub OAuth App's
-#    Authorization callback URL. See github-setup.md.
+# -> same idea: add the printed URL to your GitHub App's
+#    Callback URL (General settings). See github-setup.md.
 
 # Workload identity used only by local development
 make local-workload

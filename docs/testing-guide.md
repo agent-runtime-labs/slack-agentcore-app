@@ -236,11 +236,11 @@ Same flow as level 4, second independent provider. Steps 4a–4e all apply, with
 | `LINKEDIN_CLIENT_ID` / `LINKEDIN_CLIENT_SECRET` ([linkedin-setup.md](linkedin-setup.md)) | `GITHUB_CLIENT_ID` / `GITHUB_CLIENT_SECRET` ([github-setup.md](github-setup.md)) |
 | `make identity` | `make identity-github` |
 | "What is my LinkedIn name?" | "What is my GitHub username?" |
-| `get_my_linkedin_profile` tool, provider `slack-agent-linkedin` | `get_my_github_profile` tool, provider `slack-agent-github` |
+| `get_my_linkedin_profile` tool, provider `slack-agent-linkedin` | `use_github` tool, provider `slack-agent-github` |
 | "Connect LinkedIn" button / "LinkedIn connected ✅" | "Connect GitHub" button / "GitHub connected ✅" |
-| Revoke at LinkedIn → Settings → Data privacy → Permitted services | Revoke at GitHub → Settings → Applications → Authorized OAuth Apps |
+| Revoke at LinkedIn → Settings → Data privacy → Permitted services | Revoke at GitHub → Settings → Applications → Authorized GitHub Apps |
 
-`make local-workload` and the allow-listed return URL are shared — no separate setup needed there (see [github-setup.md](github-setup.md#4-allow-list-your-apps-return-url)).
+`make local-workload` and the allow-listed return URL are shared — no separate setup needed there (see [github-setup.md](github-setup.md#5-allow-list-your-apps-return-url)).
 
 A good check that the two providers are properly isolated: ask both LinkedIn and GitHub questions in the same thread as the same user. Each triggers its own consent link (different `nonce`, different `provider` in the pending record), and connecting one doesn't connect the other.
 
