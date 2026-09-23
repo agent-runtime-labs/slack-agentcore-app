@@ -56,7 +56,13 @@ def test_requests_consent_when_no_token(calls):
     output, state = run_tool()
 
     assert output.startswith("AUTHORIZATION_REQUIRED")
-    assert state.as_dict() == {"provider": "GitHub", "authorizationUrl": "https://gh/auth", "sessionUri": "urn:s1"}
+    # `cimd` stays None: this is an AgentCore Identity consent, not a CIMD one.
+    assert state.as_dict() == {
+        "provider": "GitHub",
+        "authorizationUrl": "https://gh/auth",
+        "sessionUri": "urn:s1",
+        "cimd": None,
+    }
 
 
 def test_revoked_token_forces_reauthentication(calls):

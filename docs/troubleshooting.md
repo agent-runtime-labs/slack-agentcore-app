@@ -27,6 +27,18 @@
 | *"Sign-in not recognised"* page | The browser doing consent isn't the one that opened the link, or cookies are blocked | Open the Slack link and finish consent in the same browser. Allow cookies for the API domain. |
 | The bot asks to connect again every time | Consent never completed (callback not reached) | Check the `oauth-callback` logs. The user must land on "LinkedIn connected ✅" or "GitHub connected ✅". |
 
+## CIMD providers (Linear, Notion, …)
+
+| Symptom | Cause | Fix |
+|---|---|---|
+| `use_linear` / `use_notion` never appears | `CIMD_TOKEN_TABLE` is empty, or the key isn't in `cimd_providers` | The agent logs `CIMD tools enabled: …` at startup. Locally, set `CIMD_TOKEN_TABLE` to a deployed table — see [cimd-providers.md](cimd-providers.md#local-development). |
+| Consent screen shows `invalid_client` | The authorization server couldn't fetch our client metadata document, or `client_id` inside it doesn't match its URL | `curl "$(./infra-as-code/tf-wrapper.sh dev output -raw cimd_client_id)"` **from outside your network** and compare the `client_id` field to the URL. |
+| `invalid_request` about `redirect_uri` | `OAUTH2_RETURN_URL` isn't in `redirect_uris` | Both derive from `PUBLIC_BASE_URL`; if they disagree, one is stale (common after an ngrok restart). |
+| Agent log: `CimdUnsupported` | The server advertises `client_id_metadata_document_supported: false` | It needs DCR or a pre-registered client and cannot be a CIMD provider. |
+| Agent log: `does not support PKCE S256` | The server offers only `plain` | We refuse to send a plaintext challenge from a public client. |
+| Agent log: HTTP 403 during discovery | The provider's CDN blocked the request | We send an explicit `User-Agent` for this reason ([_http.py](../backends/agents/slack_agent/src/cimd/_http.py)); check the provider isn't geo/IP blocking the runtime. |
+| User must reconnect on every question | No refresh token was issued, or refreshes are rejected | Check `scope` in the registry — some servers only return refresh tokens for particular scopes. |
+
 ## AWS
 
 | Symptom | Cause | Fix |

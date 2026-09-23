@@ -8,6 +8,16 @@ output "oauth_callback_url" {
   value       = local.oauth_callback_url
 }
 
+output "cimd_client_id" {
+  description = "Our OAuth client_id for CIMD providers: the URL of the client metadata document. Open it in a browser to check what authorization servers see."
+  value       = local.cimd_client_id
+}
+
+output "cimd_token_table" {
+  description = "Per-user tokens for CIMD providers (Linear, Notion, ...)"
+  value       = aws_dynamodb_table.cimd_tokens.name
+}
+
 output "agent_runtime_arn" {
   value = module.agent_runtime.agent_runtime_arn
 }

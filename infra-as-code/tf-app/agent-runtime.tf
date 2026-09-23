@@ -17,7 +17,7 @@ module "agent_runtime" {
   source = "../tf-modules/aws/agentcore-runtime"
 
   name               = local.runtime_name
-  description        = "Slack assistant with per-user LinkedIn access"
+  description        = "Slack assistant with per-user LinkedIn, GitHub and CIMD MCP access"
   image_uri          = module.agent_image.image_uri
   ecr_repository_arn = module.agent_image.repository_arn
 
@@ -27,6 +27,18 @@ module "agent_runtime" {
   idle_session_timeout_seconds     = 300
   max_session_lifetime_seconds     = 3600
 
+  # CIMD providers keep their tokens in our own table, so the runtime needs access to it.
+  additional_policy_statements = [
+    {
+      Sid    = "CimdTokenVault"
+      Effect = "Allow"
+      # GetItem to use a connection, PutItem to save a refreshed token, DeleteItem to
+      # forget one the provider has revoked.
+      Action   = ["dynamodb:GetItem", "dynamodb:PutItem", "dynamodb:DeleteItem"]
+      Resource = aws_dynamodb_table.cimd_tokens.arn
+    },
+  ]
+
   environment_variables = {
     LOG_LEVEL              = var.log_level
     MODEL_ID               = var.model_id
@@ -34,5 +46,13 @@ module "agent_runtime" {
     LINKEDIN_PROVIDER_NAME = var.linkedin_provider_name
     GITHUB_PROVIDER_NAME   = var.github_provider_name
     OAUTH2_RETURN_URL      = local.oauth_callback_url
+
+    # CIMD remote MCP servers: no client ID or secret, just the providers to switch on
+    # and the URL that identifies this app to their authorization servers.
+    CIMD_PROVIDERS           = join(",", var.cimd_providers)
+    CIMD_CLIENT_ID           = local.cimd_client_id
+    CIMD_TOKEN_TABLE         = aws_dynamodb_table.cimd_tokens.name
+    CIMD_MODEL_ID            = var.cimd_model_id
+    CIMD_CONNECTION_TTL_DAYS = var.cimd_connection_ttl_days
   }
 }

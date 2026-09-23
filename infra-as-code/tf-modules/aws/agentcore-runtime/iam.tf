@@ -21,7 +21,7 @@ resource "aws_iam_role_policy" "execution" {
 
   policy = jsonencode({
     Version = "2012-10-17"
-    Statement = [
+    Statement = concat([
       {
         Sid      = "PullImage"
         Effect   = "Allow"
@@ -100,6 +100,6 @@ resource "aws_iam_role_policy" "execution" {
           "arn:aws:secretsmanager:${local.region}:${local.account_id}:secret:bedrock-agentcore-identity!default/oauth2/${name}*"
         ]
       },
-    ]
+    ], var.additional_policy_statements)
   })
 }

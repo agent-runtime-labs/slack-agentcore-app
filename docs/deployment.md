@@ -2,16 +2,18 @@
 
 ## What gets created
 
-`terraform plan` for `dev` creates **40 resources**:
+`terraform plan` for `dev` creates about **40 resources**:
 
 | Area | Resources |
 |---|---|
 | Images | 2 ECR repositories (`-agent`, `-lambdas`) with lifecycle policies. `docker buildx` builds and pushes linux/arm64 images from your machine. |
 | Agent | AgentCore Runtime `slack_agentcore_dev` plus its execution role, and the allowed return URL on its workload identity. |
-| Slack path | HTTP API (`POST /slack/events`, `GET /oauth2/start`, `GET /oauth2/callback`) with throttling and access logs; 3 Lambdas; SQS FIFO queue and DLQ |
-| State | DynamoDB `pending-oauth` table (TTL); an empty Secrets Manager secret for Slack credentials |
+| Slack path | HTTP API (`POST /slack/events`, `GET /oauth2/start`, `GET /oauth2/callback`, `GET /oauth2/client-metadata.json`) with throttling and access logs; 3 Lambdas; SQS FIFO queue and DLQ |
+| State | DynamoDB `pending-oauth` table (TTL); DynamoDB `cimd-tokens` table (per-user CIMD tokens, TTL); an empty Secrets Manager secret for Slack credentials |
 
 Not managed by Terraform: the LinkedIn and GitHub OAuth2 credential providers (see [linkedin-setup.md](linkedin-setup.md) and [github-setup.md](github-setup.md)).
+
+**The CIMD providers (Linear, Notion) need no setup at all** — no developer app, no client secret, no credential provider. `terraform apply` publishes the client metadata document at a stable HTTPS URL and creates the token table, which is everything they require. Locally they needed an ngrok tunnel; on AWS they just work. Control which ones are enabled with `cimd_providers` in the tfvars (`[]` turns them off).
 
 ## Prerequisites
 
@@ -32,7 +34,7 @@ region       = "us-east-1"
 use_lockfile = true      # S3-native locking, no DynamoDB table needed
 ```
 
-Review [app-infra-params.tfvars](../infra-as-code/tf-vars/dev/app-infra-params.tfvars). `linkedin_provider_name` and `github_provider_name` must match the providers you created.
+Review [app-infra-params.tfvars](../infra-as-code/tf-vars/dev/app-infra-params.tfvars). `linkedin_provider_name` and `github_provider_name` must match the providers you created. `cimd_providers` defaults to `["linear", "notion"]`; nothing else is needed for those.
 
 ### 2. Deploy
 
@@ -60,16 +62,40 @@ SLACK_BOT_TOKEN=xoxb-... SLACK_SIGNING_SECRET=... ./scripts/put-slack-secret.sh 
 
 Set that URL as the Request URL of your **AWS** Slack app ([slack-setup.md](slack-setup.md)) and wait for **Verified ✓**.
 
-### 5. Smoke test
+### 5. Smoke test in Slack
 
-1. DM the bot `hello`. You should get an answer within a few seconds.
-2. Ask `what's my LinkedIn name?`. You should get a private **Connect LinkedIn** button; connect, then ask again.
-3. Ask `what's my GitHub username?`. Same flow, with a **Connect GitHub** button.
-4. Check the logs:
-   ```bash
-   aws logs tail /aws/lambda/slack-agentcore-dev-agent-worker --follow
-   aws logs tail /aws/bedrock-agentcore/runtimes/<runtime-id>-DEFAULT --follow
-   ```
+Do these in a DM with the bot, in order. Each one adds a piece: plain chat, then AgentCore
+Identity consent, then CIMD consent.
+
+1. **`hello`** — an answer within a few seconds. Proves Slack → API Gateway → SQS → worker →
+   Runtime → Bedrock works end to end.
+2. **`what's my LinkedIn name?`** — a private **Connect LinkedIn** button; connect, then ask
+   again and you get your name.
+3. **`what's my GitHub username?`** — same flow, **Connect GitHub**.
+4. **`what are my open Linear issues?`** — same flow, **Connect Linear**. This one is CIMD:
+   no client secret was involved anywhere. Ask again after connecting.
+5. **`search my Notion for <a page title>`** — **Connect Notion**. Its consent screen asks
+   *which pages to share*; pick at least one, or searches legitimately return nothing.
+6. **Ask a teammate to try steps 2–5.** They get their own connect buttons and never see
+   your data — that's the whole point of the per-user design.
+
+Before step 4, confirm the CIMD client document is publicly reachable — this is the one
+thing that is new on AWS and it takes a second to check:
+
+```bash
+curl -s "$(./tf-wrapper.sh dev output -raw cimd_client_id)" | jq
+# client_id in the response must equal the URL you just fetched
+```
+
+Then watch the logs:
+
+```bash
+aws logs tail /aws/lambda/slack-agentcore-dev-agent-worker --follow
+aws logs tail /aws/lambda/slack-agentcore-dev-oauth-callback --follow
+aws logs tail /aws/bedrock-agentcore/runtimes/<runtime-id>-DEFAULT --follow
+```
+
+Full step-by-step expectations for each flow are in [testing-guide.md § 7](testing-guide.md#7-deployed-to-aws).
 
 ## Updating
 
@@ -87,7 +113,7 @@ Copy `tf-vars/dev` to `tf-vars/prod`, change `env`, the backend `key`, and the t
 ./tf-wrapper.sh dev destroy
 ```
 
-The ECR repositories are force-deleted. The Slack secret is deleted immediately in `dev`; in `prod` it has a 30-day recovery window. The LinkedIn and GitHub credential providers and the local workload identity are left in place; see [getting-started.md](getting-started.md#8-stop) to delete them.
+The ECR repositories are force-deleted, and the `cimd-tokens` table goes with the stack — every user's Linear and Notion connection disappears and they will be asked to connect again after the next deploy. The Slack secret is deleted immediately in `dev`; in `prod` it has a 30-day recovery window. The LinkedIn and GitHub credential providers and the local workload identity are left in place; see [getting-started.md](getting-started.md#9-stop) to delete them.
 
 ## Cost notes (us-east-1, light usage)
 

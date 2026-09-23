@@ -60,6 +60,9 @@ resource "aws_apigatewayv2_route" "this" {
     "POST /slack/events"   = "slack_events"
     "GET /oauth2/start"    = "oauth_callback"
     "GET /oauth2/callback" = "oauth_callback"
+    # Our CIMD client_id. Authorization servers fetch it unauthenticated, from their
+    # own infrastructure, so it must stay public.
+    "GET /oauth2/client-metadata.json" = "oauth_callback"
   }
 
   api_id    = aws_apigatewayv2_api.this.id

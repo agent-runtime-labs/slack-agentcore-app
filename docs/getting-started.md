@@ -12,7 +12,7 @@ This guide gets the whole app running on your laptop with **Tilt** on a local Ku
 | uv | 0.11 | Runs the tests and helper scripts. |
 | AWS CLI v2 | 2.35 | Profile with Bedrock and AgentCore permissions. |
 | Terraform | ≥ 1.11 | Only needed to deploy to AWS. |
-| ngrok | 3.x | Optional: only needed to connect a real Slack app locally. |
+| ngrok | 3.x | Optional: needed to connect a real Slack app locally, and to test the CIMD providers ([step 6](#6-try-linear-and-notion-cimd-providers)) — their authorization servers must be able to reach your machine. |
 | direnv | — | Optional: auto-loads `.env` in your shell. |
 
 AWS account requirements:
@@ -35,6 +35,7 @@ Edit `.env`:
 - `AWS_PROFILE` / `AWS_REGION`: the profile and region to use.
 - `LINKEDIN_CLIENT_ID` / `LINKEDIN_CLIENT_SECRET`: from your LinkedIn developer app (see [linkedin-setup.md](linkedin-setup.md)).
 - `GITHUB_CLIENT_ID` / `GITHUB_CLIENT_SECRET`: optional, from a GitHub App (see [github-setup.md](github-setup.md)). Skip if you only want the LinkedIn tool.
+- `CIMD_PROVIDERS` / `CIMD_TOKEN_TABLE`: optional, for Linear and Notion. **No client ID or secret exists for these** — see [step 6](#6-try-linear-and-notion-cimd-providers). Leave `CIMD_TOKEN_TABLE` empty for now and those tools stay switched off.
 - Leave `SLACK_DRY_RUN=true` for now. You don't need a Slack workspace yet.
 
 `.env` is git-ignored. Never commit it.
@@ -106,7 +107,129 @@ curl -s localhost:8080/invocations -H 'Content-Type: application/json' \
   -d '{"prompt":"Hello!","userId":"slack-TLOCALDEV1-ULOCALDEV1","sessionId":"local-session-000000000000000000000001"}'
 ```
 
-## 6. Try it with a real Slack workspace (optional)
+## 6. Try Linear and Notion (CIMD providers)
+
+LinkedIn and GitHub each needed a developer app, a client ID and a client secret. **Linear and Notion need none of that.** They support [CIMD](cimd-providers.md), where the app identifies itself with the URL of a small JSON document it publishes instead of a registration. So there is no developer portal to visit and no secret to store — but two other things have to be true, and both are new compared to steps 3–5.
+
+### What these services are
+
+Never used them? Neither is needed for anything else in this repo — a free account with a bit of content in it is enough to have something to ask about.
+
+| | What it is | Sign up | Give it something to find |
+|---|---|---|---|
+| **Linear** | Issue tracker, in the same family as Jira but lighter. Work lives as *issues* inside *teams*, *projects* and *cycles* (sprints). | [linear.app](https://linear.app) — free plan, no card | Create a workspace, then 2–3 issues. Assign at least one to yourself so "my issues" returns something. |
+| **Notion** | Docs / wiki / lightweight databases. Content lives as *pages*, which contain *blocks*. | [notion.so](https://notion.so) — free personal plan | Create a page with a recognisable title and a few lines of text. |
+
+### What CIMD needs that the other providers didn't
+
+1. **A DynamoDB table for tokens.** AgentCore Identity's vault holds the LinkedIn and GitHub tokens for you. With CIMD this app is the OAuth client, so it keeps the tokens itself.
+2. **A public HTTPS base URL.** Linear's and Notion's authorization servers fetch our client metadata document *from their own servers*, so `http://localhost:8081` is unreachable to them. Locally that means an ngrok tunnel.
+
+Until `CIMD_TOKEN_TABLE` is set, the `use_linear` and `use_notion` tools are simply not registered and nothing else changes.
+
+### 6.1 Create a token table
+
+If you have already deployed to AWS (`make deploy`), the table exists — get its name with:
+
+```bash
+./infra-as-code/tf-wrapper.sh dev output -raw cimd_token_table
+```
+
+Otherwise create a throwaway one for local development:
+
+```bash
+aws dynamodb create-table \
+  --table-name slack-agentcore-local-cimd-tokens \
+  --attribute-definitions AttributeName=user_id,AttributeType=S AttributeName=provider,AttributeType=S \
+  --key-schema AttributeName=user_id,KeyType=HASH AttributeName=provider,KeyType=RANGE \
+  --billing-mode PAY_PER_REQUEST
+
+aws dynamodb update-time-to-live \
+  --table-name slack-agentcore-local-cimd-tokens \
+  --time-to-live-specification "Enabled=true,AttributeName=ttl"
+```
+
+Your local AWS profile is what the agent pod uses, so no extra IAM setup is needed.
+
+### 6.2 Start the tunnel and point the app at it
+
+The URL has to be public **before** Tilt starts, because the client document has to advertise the address it is actually served from.
+
+```bash
+ngrok http 8081          # or click ▶ on ngrok-tunnel in Tilt, then read the URL from its logs
+```
+
+Put both values in `.env`:
+
+```bash
+CIMD_PROVIDERS=linear,notion
+CIMD_TOKEN_TABLE=slack-agentcore-local-cimd-tokens
+PUBLIC_BASE_URL=https://<your-subdomain>.ngrok-free.app
+```
+
+`OAUTH2_RETURN_URL` is derived from `PUBLIC_BASE_URL`, so AgentCore Identity has to be told about the new callback too, or LinkedIn and GitHub will start failing:
+
+```bash
+set -a; source .env; set +a
+LOCAL_OAUTH_RETURN_URL="$PUBLIC_BASE_URL/oauth2/callback" make local-workload
+make up      # restart Tilt so the pods pick up the new config
+```
+
+> ngrok's free tier gives you a **new URL every restart**, and each change means editing `.env`, re-running `make local-workload` and restarting Tilt. If you plan to do this more than once, a reserved ngrok domain or a deployed dev stack is much less tedious.
+
+### 6.3 Check what the authorization servers will see
+
+This is the single most useful check, and it catches most CIMD problems before they happen:
+
+```bash
+curl -s "$PUBLIC_BASE_URL/oauth2/client-metadata.json" | jq
+```
+
+```json
+{
+  "client_id": "https://<your-subdomain>.ngrok-free.app/oauth2/client-metadata.json",
+  "client_name": "Slack AgentCore Assistant",
+  "client_uri": "https://<your-subdomain>.ngrok-free.app",
+  "redirect_uris": ["https://<your-subdomain>.ngrok-free.app/oauth2/callback"],
+  "grant_types": ["authorization_code", "refresh_token"],
+  "response_types": ["code"],
+  "token_endpoint_auth_method": "none",
+  "application_type": "web"
+}
+```
+
+`client_id` **must** be the URL you just fetched — that match is what makes the document yours. If you get HTML instead of JSON, ngrok's browser interstitial is in the way; use a reserved domain or test against the deployed stack instead.
+
+### 6.4 Ask a question
+
+```bash
+uv run --no-project python scripts/send_test_event.py --user UALICE --text "What are my open Linear issues?"
+```
+
+In the `slack-app` logs you'll see the same connect-link pattern as LinkedIn and GitHub, naming Linear:
+
+```
+[slack dry-run] chat.postEphemeral {… 'url': 'https://<your-subdomain>.ngrok-free.app/oauth2/start?nonce=…'}
+[slack dry-run] chat.update {… 'text': '🔐 <@UALICE> I need access to your Linear account first. …'}
+```
+
+Open the link, approve, and you should land on **"Linear connected ✅"**. Ask the same question again and the answer comes from your real workspace.
+
+Notion works identically with `--text "Search my Notion for <your page title>"`, with one thing to watch: **Notion's consent screen asks which pages to share.** Pick at least one, or every search comes back empty — which is correct behaviour, not a bug, and the agent is told to say "nothing was found" rather than "it does not exist".
+
+### 6.5 Confirm the tokens are per-user
+
+```bash
+aws dynamodb get-item --table-name slack-agentcore-local-cimd-tokens \
+  --key '{"user_id":{"S":"slack-TLOCALDEV1-UALICE"},"provider":{"S":"linear"}}' \
+  --query 'Item.{scope:scope.S,issuer:issuer.S,expires:access_token_expires_at.N}'
+```
+
+One row per (user, provider). Ask the same question as `--user UBOB` and you get a fresh connect link — Bob cannot reach Alice's token, exactly as with the AgentCore Identity providers.
+
+Adding a third CIMD service later (Sentry, Canva, …) is one entry in [`cimd/providers.py`](../backends/agents/slack_agent/src/cimd/providers.py) — no new account setup beyond signing in. See [cimd-providers.md](cimd-providers.md#adding-a-provider).
+
+## 7. Try it with a real Slack workspace (optional)
 
 1. Create a **separate dev Slack app** by following [slack-setup.md](slack-setup.md).
 2. In `.env`, set `SLACK_DRY_RUN=false`, `SLACK_BOT_TOKEN=xoxb-…`, and `SLACK_SIGNING_SECRET=…`, then restart Tilt.
@@ -114,15 +237,15 @@ curl -s localhost:8080/invocations -H 'Content-Type: application/json' \
 4. In the Slack app, set **Event Subscriptions → Request URL** to `https://<ngrok-host>/slack/events`.
 5. Mention the bot in a channel or DM it. The "Connect LinkedIn" button still opens `http://localhost:8081`, which works because the browser is on the same machine.
 
-## 7. Run the tests
+## 8. Run the tests
 
 ```bash
 make test
 ```
 
-This runs 39 unit tests: signature checks, event filtering, the worker's auth branch, OAuth session binding and replay protection, the LinkedIn and GitHub tools, and the local server.
+This runs 72 unit tests: signature checks, event filtering, the worker's auth branch, OAuth session binding and replay protection, the LinkedIn, GitHub and CIMD tools, CIMD discovery and callback handling, and the local server.
 
-## 8. Stop
+## 9. Stop
 
 ```bash
 make down        # removes the pods; the namespace and AWS identity resources remain

@@ -29,10 +29,10 @@ def cookie(event: dict, name: str) -> str | None:
     return None
 
 
-def json_response(status: int, body: Any) -> dict:
+def json_response(status: int, body: Any, headers: dict[str, str] | None = None) -> dict:
     return {
         "statusCode": status,
-        "headers": {"Content-Type": "application/json"},
+        "headers": {"Content-Type": "application/json", **(headers or {})},
         "body": json.dumps(body),
     }
 
