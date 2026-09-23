@@ -59,5 +59,6 @@ async def slack_events_route(request: Request) -> Response:
 
 @app.get("/oauth2/start")
 @app.get("/oauth2/callback")
+@app.get("/oauth2/client-metadata.json")
 async def oauth_routes(request: Request) -> Response:
     return await _invoke(oauth_callback.handler, request)

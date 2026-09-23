@@ -56,14 +56,48 @@ The unit tests in [test_oauth_callback.py](../backends/lambdas/tests/test_oauth_
 
 **Residual risk:** anyone who gets the start link within its 10 minutes (for example if a user forwards it) can bind *their* account (LinkedIn or GitHub) to that user. The link is shown only to the requesting user and expires quickly. For stronger binding, have users sign in to your app with Slack before redirecting, and compare that signed-in identity to `record.slack_user`.
 
+## CIMD providers: when we own the vault
+
+Linear and Notion do not go through AgentCore Identity — no AgentCore client
+authentication method fits their authorization servers, so this app is the OAuth client
+itself ([cimd-providers.md](cimd-providers.md)). Two things change, and both matter here.
+
+**The vault is ours.** Tokens live in the `cimd-tokens` DynamoDB table instead of the
+AgentCore token vault: hash key `user_id` (`slack-<team>-<user>`), sort key `provider`, so
+a lookup can only ever return the asking user's own token. Encryption at rest is on, the
+`oauth-callback` role may only `PutItem`, the runtime role may read/write/delete, and a
+`ttl` attribute drops connections unused for 90 days. Consider a customer-managed KMS key
+in production so token reads appear in CloudTrail.
+
+**The user ID comes from the payload, not the workload token.** The AgentCore Identity
+tools pass the Runtime-injected workload access token to `GetResourceOauth2Token`, so the
+request payload is never trusted. CIMD tools key their DynamoDB lookup on the `userId`
+field of the payload instead. That value is still not user-supplied — the Runtime is
+IAM-only, only the `agent-worker` Lambda role may invoke it, and that Lambda derives
+`userId` from an HMAC-verified Slack event, exactly as it derives `runtimeUserId`. But the
+assertion now comes from our worker rather than from AgentCore, so if anything else is
+ever granted `InvokeAgentRuntime` on this runtime, that is the control to re-check.
+
+**Binding is stronger, not weaker, on the browser side.** In addition to the cookie nonce,
+the CIMD callback checks the OAuth `state` against the pending record and the `iss`
+parameter (RFC 9207) against the issuer discovery resolved, and the PKCE verifier never
+leaves AWS — only its SHA-256 hash travels through the browser. The rejection paths are
+covered in [test_cimd_callback.py](../backends/lambdas/tests/test_cimd_callback.py).
+
+**What leaves the account.** The sub-agent sends the user's request text to the remote MCP
+server, so Slack content reaches that vendor. Keep `scope` minimal in the provider
+registry; prefer read-only scopes unless the write flow is wanted.
+
 ## Other controls
 
 | Control | Where |
 |---|---|
 | Slack tokens in Secrets Manager, never in Terraform state | `aws_secretsmanager_secret.slack` + `put-slack-secret.sh` |
 | LinkedIn and GitHub client secrets never in Terraform state or on the command line | `identity-setup.sh` (temp file, mode 600) |
+| CIMD providers have no client secret at all (public client, PKCE S256 + exact redirect URI) | [cimd_client.py](../backends/lambdas/src/slack_app/cimd_client.py) |
+| Per-user CIMD tokens isolated by primary key, encrypted at rest, TTL-expired, write-only for the callback role | [data-stores.tf](../infra-as-code/tf-app/data-stores.tf), [lambdas.tf](../infra-as-code/tf-app/lambdas.tf) |
 | Least-privilege roles: one per Lambda, scoped to its queue, table, secret, or runtime | [lambdas.tf](../infra-as-code/tf-app/lambdas.tf) |
-| Runtime role limited to its two allow-listed models (chat + GitHub sub-agent) and its credential providers (`oauth2_credential_provider_names`) | [agentcore-runtime/iam.tf](../infra-as-code/tf-modules/aws/agentcore-runtime/iam.tf), [tf-app/locals.tf](../infra-as-code/tf-app/locals.tf) |
+| Runtime role limited to its allow-listed models (chat + MCP sub-agents), its credential providers (`oauth2_credential_provider_names`) and the CIMD token table | [agentcore-runtime/iam.tf](../infra-as-code/tf-modules/aws/agentcore-runtime/iam.tf), [tf-app/locals.tf](../infra-as-code/tf-app/locals.tf) |
 | API throttling (20 rps steady, 40 burst by default) | `aws_apigatewayv2_stage.default` |
 | Access logs without query strings (the nonce stays out of logs) | same |
 | Encryption at rest | SQS SSE, DynamoDB SSE, ECR AES256 |
@@ -74,7 +108,7 @@ The unit tests in [test_oauth_callback.py](../backends/lambdas/tests/test_oauth_
 
 ## Data exposure to keep in mind
 
-- LinkedIn or GitHub data is posted **in the thread where it was requested**. In a public channel, others can read it. DM the bot for private data.
+- LinkedIn, GitHub, Linear or Notion data is posted **in the thread where it was requested**. In a public channel, others can read it. DM the bot for private data.
 - Conversation history lives in memory inside the user's own Runtime session and disappears when the session ends.
 - Local development uses real AWS credentials, copied into a Kubernetes Secret in your local cluster.
 

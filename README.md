@@ -1,6 +1,9 @@
 # Slack × Amazon Bedrock AgentCore
 
-A Slack assistant running on **Amazon Bedrock AgentCore Runtime** (Strands Agents + **Amazon Nova Micro**) that can read **each user's own LinkedIn and GitHub profile** through **AgentCore Identity** (OAuth2 authorization code grant, stored per user).
+A Slack assistant running on **Amazon Bedrock AgentCore Runtime** (Strands Agents + **Amazon Nova Micro**) that acts on **each user's own accounts**, never a shared one:
+
+- **LinkedIn and GitHub** through **AgentCore Identity** — AWS is the OAuth client and owns the token vault.
+- **Linear and Notion** through **CIMD** ([Client ID Metadata Documents](docs/cimd-providers.md), MCP SEP-991) — no client ID, no client secret, no registration: the app identifies itself to their authorization servers with the URL of a JSON document it publishes. Adding another CIMD server is one entry in a registry.
 
 Based on the AWS blog post [Integrating Amazon Bedrock AgentCore with Slack](https://aws.amazon.com/blogs/machine-learning/integrating-amazon-bedrock-agentcore-with-slack/) and its [sample](https://github.com/aws-samples/sample-Integrating-Amazon-Bedrock-AgentCore-with-Slack). This version uses Terraform, Python Lambdas, Tilt for local development, and per-user outbound OAuth.
 
@@ -8,8 +11,11 @@ Based on the AWS blog post [Integrating Amazon Bedrock AgentCore with Slack](htt
 Slack ─► API Gateway ─► λ slack-events ─► SQS FIFO ─► λ agent-worker ─► AgentCore Runtime ─► Nova Micro
                                                          │  runtimeUserId=slack-<team>-<user>      │
                                                          │                                          ├─► AgentCore Identity ─► LinkedIn
-                                                         │                                          └─► AgentCore Identity ─► GitHub
-Browser ─► API Gateway ─► λ oauth-callback (session binding) ─► CompleteResourceTokenAuth
+                                                         │                                          ├─► AgentCore Identity ─► GitHub MCP
+                                                         │                                          └─► CIMD + DynamoDB ────► Linear / Notion MCP
+Browser ─► API Gateway ─► λ oauth-callback ─► CompleteResourceTokenAuth  (LinkedIn, GitHub)
+                                           └► PKCE code exchange         (CIMD providers)
+          API Gateway ─► λ oauth-callback ─► GET /oauth2/client-metadata.json   (our CIMD client_id)
 ```
 
 ## Repository layout
@@ -39,6 +45,7 @@ cp .env.tmpl .env                          # set AWS_PROFILE, LINKEDIN_CLIENT_ID
 set -a; source .env; set +a
 make identity local-workload                # AgentCore Identity: LinkedIn provider + local workload identity
 make identity-github                        # optional: GitHub provider (needs GITHUB_CLIENT_ID/SECRET)
+                                            # Linear/Notion need nothing here -- see docs/cimd-providers.md
 make up                                     # tilt up -> http://localhost:10350
 ```
 
@@ -54,6 +61,7 @@ Then click **send-test-mention** in Tilt and follow the connect link that appear
 | [Slack setup](docs/slack-setup.md) | Create the Slack app from a [manifest](docs/slack-app-manifest.yaml) |
 | [LinkedIn & AgentCore Identity setup](docs/linkedin-setup.md) | Developer app, credential provider, redirect URLs |
 | [GitHub & AgentCore Identity setup](docs/github-setup.md) | Same pattern as LinkedIn, using the `GithubOauth2` vendor |
+| [CIMD remote MCP servers](docs/cimd-providers.md) | Linear, Notion and how to add another in one registry entry |
 | [Deployment](docs/deployment.md) | Terraform with the S3 backend, updating, teardown, cost notes |
 | [Per-user identity & security](docs/identity-and-security.md) | Why tokens don't leak between users; session binding |
 | [Troubleshooting](docs/troubleshooting.md) | Common errors and fixes |
@@ -61,7 +69,7 @@ Then click **send-test-mention** in Tilt and follow the connect link that appear
 ## Common commands
 
 ```bash
-make test          # 39 unit tests (lambdas + agent)
+make test          # 72 unit tests (lambdas + agent)
 make tf-validate   # terraform fmt check + validate
 make deploy        # ENV=dev by default
 make outputs       # Slack Request URL, runtime ARN, ...

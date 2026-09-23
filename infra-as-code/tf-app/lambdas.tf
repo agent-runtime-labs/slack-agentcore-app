@@ -110,7 +110,7 @@ module "oauth_callback_fn" {
   source = "../tf-modules/aws/lambda-function"
 
   name        = "${local.name_prefix}-oauth-callback"
-  description = "Binds LinkedIn consent to the Slack user and completes token exchange"
+  description = "Binds consent to the Slack user, completes the token exchange, and serves the CIMD client document"
   image_uri   = module.lambda_image.image_uri
   command     = ["slack_app.handlers.oauth_callback.handler"]
   timeout     = 15
@@ -118,6 +118,11 @@ module "oauth_callback_fn" {
   environment_variables = merge(local.lambda_common_env, {
     PENDING_AUTH_TABLE = aws_dynamodb_table.pending_auth.name
     COOKIE_SECURE      = "true"
+    # The client metadata document must advertise the URL it is served from, so the
+    # handler builds both from the public base URL.
+    PUBLIC_BASE_URL          = local.public_base_url
+    CIMD_TOKEN_TABLE         = aws_dynamodb_table.cimd_tokens.name
+    CIMD_CONNECTION_TTL_DAYS = var.cimd_connection_ttl_days
   })
 
   policy_json = jsonencode({
@@ -128,6 +133,13 @@ module "oauth_callback_fn" {
         Effect   = "Allow"
         Action   = ["dynamodb:GetItem", "dynamodb:DeleteItem"]
         Resource = aws_dynamodb_table.pending_auth.arn
+      },
+      {
+        # Write-only: this function mints a CIMD connection, the agent runtime reads
+        # and refreshes it. It never needs to read a token back.
+        Effect   = "Allow"
+        Action   = ["dynamodb:PutItem"]
+        Resource = aws_dynamodb_table.cimd_tokens.arn
       },
       {
         Effect = "Allow"

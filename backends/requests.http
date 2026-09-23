@@ -21,4 +21,19 @@ X-Amzn-Bedrock-AgentCore-Runtime-Session-Id: {{sessionId}}
 ### Local gateway health
 GET {{app}}/healthz
 
+### Our CIMD client metadata document -- this URL is our OAuth client_id.
+### `client_id` in the response must equal the URL it was fetched from.
+GET {{app}}/oauth2/client-metadata.json
+
+### Ask a CIMD provider something (needs CIMD_TOKEN_TABLE + a public PUBLIC_BASE_URL)
+POST {{agent}}/invocations
+Content-Type: application/json
+X-Amzn-Bedrock-AgentCore-Runtime-Session-Id: {{sessionId}}
+
+{
+  "prompt": "What are my open Linear issues?",
+  "userId": "slack-TLOCALDEV1-ULOCALDEV1",
+  "sessionId": "{{sessionId}}"
+}
+
 ### Slack events need a valid signature: use scripts/send_test_event.py instead.

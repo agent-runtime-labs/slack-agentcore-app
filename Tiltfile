@@ -14,6 +14,10 @@ AWS_PROFILE = os.getenv('AWS_PROFILE', '')
 AWS_REGION = os.getenv('AWS_REGION', 'us-east-1')
 SLACK_DRY_RUN = os.getenv('SLACK_DRY_RUN', 'true')
 LOCAL_BASE_URL = 'http://localhost:8081'
+# CIMD authorization servers fetch our client metadata document themselves, so testing
+# that flow locally needs a public https URL -- point PUBLIC_BASE_URL at your ngrok
+# tunnel (and re-run `make identity-setup` so the workload identity allows it).
+PUBLIC_BASE_URL = os.getenv('PUBLIC_BASE_URL', LOCAL_BASE_URL)
 
 namespace_create(NAMESPACE)
 
@@ -34,10 +38,15 @@ k8s_object('ConfigMap', 'app-config', {
     'LINKEDIN_PROVIDER_NAME': os.getenv('LINKEDIN_PROVIDER_NAME', 'slack-agent-linkedin'),
     'GITHUB_PROVIDER_NAME': os.getenv('GITHUB_PROVIDER_NAME', 'slack-agent-github'),
     'LOCAL_WORKLOAD_NAME': os.getenv('LOCAL_WORKLOAD_NAME', 'slack-agent-local'),
-    'OAUTH2_RETURN_URL': LOCAL_BASE_URL + '/oauth2/callback',
+    'OAUTH2_RETURN_URL': PUBLIC_BASE_URL + '/oauth2/callback',
     # The browser doing consent runs on this machine, so localhost works even
     # when Slack events arrive through an ngrok tunnel.
-    'PUBLIC_BASE_URL': LOCAL_BASE_URL,
+    'PUBLIC_BASE_URL': PUBLIC_BASE_URL,
+    # CIMD: empty CIMD_TOKEN_TABLE disables the CIMD tools (see cimd/providers.py).
+    'CIMD_PROVIDERS': os.getenv('CIMD_PROVIDERS', 'linear,notion'),
+    'CIMD_TOKEN_TABLE': os.getenv('CIMD_TOKEN_TABLE', ''),
+    'CIMD_CLIENT_ID': PUBLIC_BASE_URL + '/oauth2/client-metadata.json',
+    'CIMD_MODEL_ID': os.getenv('CIMD_MODEL_ID', 'us.anthropic.claude-haiku-4-5-20251001-v1:0'),
     'COOKIE_SECURE': 'false',
     'SLACK_DRY_RUN': SLACK_DRY_RUN,
     'OTEL_SDK_DISABLED': 'true',

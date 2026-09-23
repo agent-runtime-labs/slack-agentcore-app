@@ -19,3 +19,8 @@ def test_local_server_routes_to_handlers(monkeypatch):
 
     response = client.get("/oauth2/start", params={"nonce": "missing"})
     assert response.status_code == 400
+
+    # The CIMD client document is public: authorization servers fetch it themselves.
+    metadata = client.get("/oauth2/client-metadata.json")
+    assert metadata.status_code == 200
+    assert metadata.json()["client_id"].endswith("/oauth2/client-metadata.json")

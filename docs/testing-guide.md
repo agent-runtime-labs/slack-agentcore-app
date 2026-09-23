@@ -4,11 +4,12 @@ How to check that each part of the app works, from unit tests up to a real Slack
 
 | Level | Needs | Covers |
 |---|---|---|
-| [1. Unit tests](#1-unit-tests) | uv | Signature checks, event filtering, OAuth session binding, the LinkedIn and GitHub tools |
+| [1. Unit tests](#1-unit-tests) | uv | Signature checks, event filtering, OAuth session binding, the LinkedIn, GitHub and CIMD tools |
 | [2. Agent only](#2-agent-only) | Tilt running | Agent container + Bedrock (Nova Micro) |
 | [3. Chat through the Slack handlers (dry run)](#3-chat-through-the-slack-handlers-dry-run) | Tilt | The full request path, without a Slack workspace |
 | [4. LinkedIn connect flow (dry run)](#4-linkedin-connect-flow-dry-run) | Tilt + LinkedIn app + identity setup | Per-user OAuth, session binding, token isolation |
 | [4b. GitHub connect flow (dry run)](#4b-github-connect-flow-dry-run) | Tilt + GitHub app + identity setup | Same as level 4, second provider |
+| [4c. CIMD connect flow: Linear / Notion](#4c-cimd-connect-flow-linear--notion) | Tilt + ngrok + a token table | OAuth with **no client secret**: PKCE, our own token store, `state` and `iss` checks |
 | [5. Security checks](#5-negative--security-checks) | Level 4 | That bad requests are rejected |
 | [6. Real Slack, locally](#6-real-slack-locally) | Slack dev app + ngrok | Slack UI, ephemeral messages |
 | [7. Deployed to AWS](#7-deployed-to-aws) | `terraform apply` | Lambdas, SQS, DynamoDB, Runtime with `runtimeUserId` |
@@ -246,6 +247,167 @@ A good check that the two providers are properly isolated: ask both LinkedIn and
 
 ---
 
+## 4c. CIMD connect flow (Linear / Notion)
+
+Same user experience as levels 4 and 4b — private connect link, one-time nonce,
+"connected ✅" page — but a different mechanism underneath: **no client ID, no client
+secret, no credential provider.** The app is the OAuth client, identified by a URL, and it
+keeps the tokens itself. Background: [cimd-providers.md](cimd-providers.md).
+
+New to Linear and Notion? [getting-started.md § 6](getting-started.md#6-try-linear-and-notion-cimd-providers)
+explains what they are, how to get a free account, and what to put in them so queries
+return something.
+
+### One-time setup
+
+CIMD needs two things the other providers didn't: somewhere to store tokens, and a public
+HTTPS URL, because **the authorization server fetches our client document from its own
+servers** — it can't reach `localhost`.
+
+```bash
+# 1. A token table (or use the deployed one:
+#    ./infra-as-code/tf-wrapper.sh dev output -raw cimd_token_table)
+aws dynamodb create-table \
+  --table-name slack-agentcore-local-cimd-tokens \
+  --attribute-definitions AttributeName=user_id,AttributeType=S AttributeName=provider,AttributeType=S \
+  --key-schema AttributeName=user_id,KeyType=HASH AttributeName=provider,KeyType=RANGE \
+  --billing-mode PAY_PER_REQUEST
+
+# 2. A public URL, before Tilt starts
+ngrok http 8081
+
+# 3. .env
+#    CIMD_PROVIDERS=linear,notion
+#    CIMD_TOKEN_TABLE=slack-agentcore-local-cimd-tokens
+#    PUBLIC_BASE_URL=https://<subdomain>.ngrok-free.app
+
+set -a; source .env; set +a
+LOCAL_OAUTH_RETURN_URL="$PUBLIC_BASE_URL/oauth2/callback" make local-workload   # keeps LinkedIn/GitHub working
+make up
+```
+
+Confirm the tools registered — the `slack-agent` log prints this at the first request:
+
+```
+INFO:cimd.tool:CIMD tools enabled: linear, notion
+```
+
+No line means `CIMD_TOKEN_TABLE` is empty or the key isn't in `CIMD_PROVIDERS`.
+
+### 4c-a. The client document is reachable and correct
+
+Do this first; it catches most CIMD failures before you see a confusing `invalid_client`.
+
+```bash
+curl -s "$PUBLIC_BASE_URL/oauth2/client-metadata.json" | jq
+```
+
+**Expected:** JSON (not an ngrok HTML interstitial) where
+
+- `client_id` is **exactly** the URL you just fetched;
+- `redirect_uris` contains `$PUBLIC_BASE_URL/oauth2/callback`;
+- `token_endpoint_auth_method` is `"none"` and there is no `client_secret` anywhere.
+
+This proves the whole "registration": those three facts are all the authorization server
+learns about us.
+
+### 4c-b. First question: consent needed
+
+```bash
+uv run --no-project python scripts/send_test_event.py --user UALICE --text "What are my open Linear issues?"
+```
+
+**Expected `slack-app` logs:**
+
+```
+[slack dry-run] chat.postEphemeral {'channel': 'CLOCALDEV1', 'user': 'UALICE', …
+    'url': 'https://<subdomain>.ngrok-free.app/oauth2/start?nonce=AbC…'}
+[slack dry-run] chat.update {… 'text': '🔐 <@UALICE> I need access to your Linear account first. …'}
+```
+
+**Expected `slack-agent` logs:**
+
+```
+INFO:cimd.discovery:Discovered linear authorization server: https://mcp.linear.app
+INFO:cimd.tool:Requesting linear consent (state Day85v…)
+```
+
+Proves discovery worked (`/.well-known/oauth-protected-resource/mcp` →
+`/.well-known/oauth-authorization-server`) and that a PKCE authorization request was built.
+
+### 4c-c. Give consent
+
+1. Open the `/oauth2/start?nonce=…` link in your browser.
+2. You land on Linear's consent screen. Approve.
+3. The browser returns to `…/oauth2/callback?code=…&state=…&iss=…`.
+
+**Expected:**
+- The page says **"Linear connected ✅"**.
+- `slack-app` logs `Exchanged authorization code for linear tokens` and the ephemeral
+  `✅ Linear connected. Ask me your question again.`
+
+What happened, and how it differs from level 4: the callback checked the cookie nonce,
+compared `state` with the pending record, compared `iss` with the issuer discovery
+resolved, consumed the nonce, then **exchanged the code itself** — `POST /token` with the
+PKCE verifier and `client_id=<our document URL>`, no secret — and wrote the tokens to
+DynamoDB. AgentCore Identity is not involved at any point.
+
+> Same 10-minute limit as level 4, and the same warning: locally the pending record lives
+> in the `slack-app` pod's memory, so a code change restarts the pod and voids the link.
+
+### 4c-d. Ask again: the stored token is used
+
+```bash
+uv run --no-project python scripts/send_test_event.py --user UALICE --text "What are my open Linear issues?"
+```
+
+**Expected:** a `chat.update` listing your real issues, no new connect link, and no
+`Requesting linear consent` line in the agent log.
+
+### 4c-e. The token really is per-user
+
+```bash
+aws dynamodb scan --table-name slack-agentcore-local-cimd-tokens \
+  --projection-expression "user_id,provider,issuer,#s" \
+  --expression-attribute-names '{"#s":"scope"}'
+```
+
+**Expected:** one row, `slack-TLOCALDEV1-UALICE` / `linear`. Then:
+
+```bash
+uv run --no-project python scripts/send_test_event.py --user UBOB --text "What are my open Linear issues?"
+```
+
+**Expected:** a fresh connect link for `UBOB`. The primary key is `(user_id, provider)`, so
+a lookup can only ever return the asking user's own token.
+
+### 4c-f. Notion, and the sharing gotcha
+
+```bash
+uv run --no-project python scripts/send_test_event.py --user UALICE --text "Search my Notion for <your page title>"
+```
+
+Notion's consent screen asks **which pages to share with the integration**. Pick at least
+one, or searches return nothing — that is correct behaviour, not a failure. The agent is
+told to answer "no matching pages were found" rather than claiming the page doesn't exist,
+so an empty result should read that way.
+
+Connecting Linear does not connect Notion: separate rows, separate consents, separate
+authorization servers.
+
+### 4c-g. Revoked access forces a reconnect
+
+1. Revoke the app's access from the provider's side — in Linear under **Settings → API**
+   (authorized applications), in Notion under **Settings → Connections**. Menu paths move
+   around; look for connected or authorized applications.
+2. Repeat 4c-d.
+
+**Expected:** the MCP server answers 401, the agent logs
+`linear rejected the stored token; asking the user to reconnect`, deletes the row, and
+sends a new connect link. Confirm the row is gone with the scan from 4c-e.
+
+---
+
 ## 5. Negative / security checks
 
 Run these after 4a, so a pending link exists.
@@ -258,6 +420,9 @@ Run these after 4a, so a pending link exists.
 | 5d | `curl -i -b "slack_agent_oauth=<real nonce>" "localhost:8081/oauth2/callback?session_id=wrong"` | 403, and the nonce is still valid (not consumed) |
 | 5e | Wait more than 10 minutes, then open the link | "Link expired" |
 | 5f | Send an event with the wrong secret: `SLACK_SIGNING_SECRET=wrong uv run --no-project python scripts/send_test_event.py` | `401 {"error": "invalid signature"}`, nothing queued |
+| 5g | CIMD only — finish a consent with a tampered `state`: `curl -i -b "slack_agent_oauth=<real nonce>" "$PUBLIC_BASE_URL/oauth2/callback?code=x&state=wrong"` | 403 "Sign-in not recognised", no token exchange, and the nonce is **not** consumed |
+| 5h | CIMD only — same but with a foreign issuer: `…?code=x&state=<real state>&iss=https://evil.example.com` | 403, no token exchange (RFC 9207 mix-up check) |
+| 5i | CIMD only — confirm no secret exists: `curl -s "$PUBLIC_BASE_URL/oauth2/client-metadata.json" \| grep -i secret` | no output; the client is public and authenticated by PKCE alone |
 | 5g | Replay a request that's more than 5 minutes old | 401 (covered by the unit test `test_rejects_stale_timestamp`) |
 | 5h | Bot or edited messages (`bot_id`, `subtype`) | Ignored (unit test `test_ignores_non_user_events`) |
 
@@ -280,6 +445,7 @@ Setup: [slack-setup.md](slack-setup.md). Create a **dev** Slack app, set `SLACK_
 | 6g | Ask a teammate to try 6e | They get their own button; they never see your data |
 | 6h | Edit a message you sent to the bot | No new reply (edits are ignored) |
 | 6i | `@AgentCore Assistant what's my GitHub username?` (needs `make identity-github`, [github-setup.md](github-setup.md)) | Same as 6e/6f, with "Connect GitHub" / "GitHub connected ✅" |
+| 6j | `@AgentCore Assistant what are my open Linear issues?` | Same as 6e/6f, with "Connect Linear". You already have a tunnel running for this level, so set `PUBLIC_BASE_URL` to that ngrok URL and the CIMD setup from [4c](#4c-cimd-connect-flow-linear--notion) applies unchanged |
 
 The ngrok inspector at <http://localhost:4040> shows every request Slack sent and how the app responded. It's useful when a message doesn't get a reply.
 
@@ -289,7 +455,38 @@ The ngrok inspector at <http://localhost:4040> shows every request Slack sent an
 
 Setup: [deployment.md](deployment.md). Use a **separate** Slack app pointed at the `slack_events_url` output.
 
-Repeat tests 6a–6i in that Slack app, then check the AWS side:
+This is the easiest place to exercise everything, and especially the CIMD providers: API
+Gateway gives you a **stable public HTTPS URL**, so Linear and Notion work with no tunnel,
+no local token table and no extra configuration. What was fiddly locally is free here.
+
+### 7.0 What changes compared to local
+
+| | Local (levels 4–6) | Deployed (level 7) |
+|---|---|---|
+| Connect links point at | `localhost:8081`, or a tunnel that changes | The API Gateway URL — stable, works from a phone or a colleague's laptop |
+| CIMD prerequisites | ngrok + a hand-made DynamoDB table | None; `terraform apply` creates both |
+| Pending connect links | in-memory, lost when the pod restarts | DynamoDB, survives deploys |
+| CIMD tokens | your throwaway table | `<prefix>-cimd-tokens`, TTL-expired |
+| Who can test | you | anyone in the workspace, each with their own tokens |
+
+Slack app configuration is unchanged — the tools are server-side, so no new Slack scopes
+are needed for Linear or Notion.
+
+### 7.1 In Slack
+
+Repeat tests 6a–6j against the deployed app. The two CIMD steps in full:
+
+| # | In Slack | Expected |
+|---|---|---|
+| 7-L1 | `@bot what are my open Linear issues?` (first time) | Public "🔐 I need access to your Linear account first", plus a private **Connect Linear** button ("Only visible to you") pointing at `https://<api>.execute-api.<region>.amazonaws.com/oauth2/start?nonce=…` |
+| 7-L2 | Click it, approve on Linear's consent screen | Browser shows **"Linear connected ✅"**; an ephemeral "✅ Linear connected. Ask me your question again." appears in the thread |
+| 7-L3 | Ask again | Your real issues, no new button |
+| 7-L4 | `@bot create an issue in <team> called "Test from Slack"` | The bot **drafts** the issue and asks you to confirm — it never writes on the first call. Reply confirming, and it creates it. Check Linear. |
+| 7-N1 | `@bot search my Notion for <page title>` | **Connect Notion** button; its consent screen asks which pages to share — pick at least one |
+| 7-N2 | Ask again | Content from the page you shared. An empty answer means nothing was shared, not a failure |
+| 7-X | Ask a teammate to do 7-L1 | Their own button, their own token; they never see your issues |
+
+### 7.2 On the AWS side
 
 ```bash
 cd infra-as-code
@@ -310,9 +507,16 @@ aws sqs get-queue-attributes --attribute-names ApproximateNumberOfMessages \
 
 # Pending connect links (should be empty soon after consent)
 aws dynamodb scan --table-name $PREFIX-pending-oauth --select COUNT
+
+# CIMD connections: one row per (user, provider)
+aws dynamodb scan --table-name $PREFIX-cimd-tokens \
+  --projection-expression "user_id,provider,issuer" --output table
+
+# The client document authorization servers fetch (no auth, public on purpose)
+curl -s "$(./tf-wrapper.sh dev output -raw cimd_client_id)" | jq
 ```
 
-**AWS-only checks:**
+### 7.3 AWS-only checks
 
 | # | Check | Expected |
 |---|---|---|
@@ -321,6 +525,11 @@ aws dynamodb scan --table-name $PREFIX-pending-oauth --select COUNT
 | 7c | Invoke the runtime directly **without** `runtimeUserId` (AWS CLI) and ask about LinkedIn or GitHub | No profile data is returned (the tool reports an error): a token can't be used without a user identity |
 | 7d | API throttling: send a burst of more than 40 requests per second to `/slack/events` | Some get `429` |
 | 7e | DLQ after the tests | `0` |
+| 7f | `curl` the `cimd_client_id` URL from a machine outside AWS | JSON whose `client_id` equals that URL, `token_endpoint_auth_method: "none"`, and no `client_secret` field — this *is* the CIMD registration |
+| 7g | `oauth-callback` log during a Linear consent | `Exchanged authorization code for linear tokens`, and **no** `CompleteResourceTokenAuth` call — CIMD does the exchange itself |
+| 7h | The `cimd-tokens` scan after two people connect Linear | Two rows with different `user_id`, same `provider`. No row is readable by the other user: the key is `(user_id, provider)` |
+| 7i | Revoke the app in Linear, then ask again | The runtime log shows `linear rejected the stored token; asking the user to reconnect`, the row disappears, and Slack shows a fresh Connect button |
+| 7j | Grep the Lambda and runtime logs for token material: `aws logs tail … \| grep -iE "access_token\|refresh_token\|code="` | No hits — tokens and codes are never logged |
 
 ---
 

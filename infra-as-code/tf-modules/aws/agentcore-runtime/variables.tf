@@ -37,6 +37,15 @@ variable "oauth2_credential_provider_names" {
   description = "AgentCore Identity OAuth2 credential providers the agent may fetch user tokens from"
 }
 
+variable "additional_policy_statements" {
+  type        = list(any)
+  description = <<-EOT
+    Extra IAM policy statements for the execution role, for resources this module knows
+    nothing about (e.g. a DynamoDB table holding OAuth tokens the agent manages itself).
+  EOT
+  default     = []
+}
+
 variable "allowed_oauth2_return_urls" {
   type        = list(string)
   description = "URLs AgentCore Identity may redirect to after user consent"

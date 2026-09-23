@@ -2,8 +2,16 @@
 
 Flow: the worker stores a record under a random nonce and DMs the user a link to
 /oauth2/start?nonce=...; /oauth2/start drops the nonce into a cookie and redirects
-to the provider (LinkedIn, GitHub, ...); /oauth2/callback reads the cookie back and
-checks the session URI before completing the token exchange. The nonce is single-use.
+to the provider (LinkedIn, GitHub, Linear, ...); /oauth2/callback reads the cookie back
+and checks the session before completing the token exchange. The nonce is single-use.
+
+Records serve both consent flows:
+
+  * AgentCore Identity  -> `session_uri` is set and `cimd` is None. AWS performs the
+    token exchange; we only confirm the session belongs to this user.
+  * CIMD                -> `cimd` holds the handoff payload the agent built (state,
+    PKCE verifier, token endpoint, ...) and we perform the exchange ourselves. The
+    record is the only place that verifier ever lives, for at most TTL_SECONDS.
 """
 
 import os
@@ -31,6 +39,8 @@ class PendingAuth:
     slack_user: str
     thread_ts: str
     expires_at: int
+    # None for AgentCore Identity consents. See docs/cimd-providers.md for the schema.
+    cimd: dict | None = None
 
     def expired(self, now: float | None = None) -> bool:
         return (now or time.time()) >= self.expires_at

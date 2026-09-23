@@ -52,7 +52,10 @@ def _send_connect_link(slack, job: dict, user_id: str, auth: dict) -> None:
         nonce=new_nonce(),
         runtime_user_id=user_id,
         provider=provider,
-        session_uri=auth["sessionUri"],
+        # Exactly one of these is set: AgentCore Identity gives us a session URI,
+        # a CIMD provider gives us the handoff payload the callback needs.
+        session_uri=auth.get("sessionUri") or "",
+        cimd=auth.get("cimd"),
         authorization_url=auth["authorizationUrl"],
         channel=job["channel"],
         slack_user=job["user"],

@@ -42,6 +42,29 @@ variable "github_provider_name" {
   default     = "slack-agent-github"
 }
 
+variable "cimd_providers" {
+  type        = list(string)
+  description = <<-EOT
+    CIMD remote MCP servers to enable, by registry key (see
+    backends/agents/slack_agent/src/cimd/providers.py). These need no client ID, no
+    client secret and no credential provider: the app identifies itself with the URL of
+    its client metadata document. Empty disables the CIMD tools entirely.
+  EOT
+  default     = ["linear", "notion"]
+}
+
+variable "cimd_model_id" {
+  type        = string
+  description = "Bedrock model for the CIMD sub-agents, which chain tool calls through remote MCP catalogues."
+  default     = "us.anthropic.claude-haiku-4-5-20251001-v1:0"
+}
+
+variable "cimd_connection_ttl_days" {
+  type        = number
+  description = "Days a CIMD connection survives unused before DynamoDB TTL drops it and the user must reconnect."
+  default     = 90
+}
+
 variable "log_level" {
   type    = string
   default = "INFO"

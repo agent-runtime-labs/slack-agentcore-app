@@ -47,6 +47,44 @@ resource "aws_dynamodb_table" "pending_auth" {
   }
 }
 
+# Per-user OAuth tokens for CIMD providers (Linear, Notion, ...). With AgentCore
+# Identity, AWS owns the token vault; a CIMD client has none, so this table is it.
+# Written by the oauth_callback Lambda when a user consents, read and refreshed by the
+# agent runtime. Schema: docs/cimd-providers.md.
+resource "aws_dynamodb_table" "cimd_tokens" {
+  name         = "${local.name_prefix}-cimd-tokens"
+  billing_mode = "PAY_PER_REQUEST"
+  hash_key     = "user_id"
+  range_key    = "provider"
+
+  attribute {
+    name = "user_id"
+    type = "S"
+  }
+
+  attribute {
+    name = "provider"
+    type = "S"
+  }
+
+  # Expires a whole connection after cimd_connection_ttl_days of inactivity, so an
+  # abandoned user's refresh token does not live forever. Deliberately not the access
+  # token's expiry -- that would delete the refresh token an hour after consent.
+  ttl {
+    attribute_name = "ttl"
+    enabled        = true
+  }
+
+  server_side_encryption {
+    enabled = true
+  }
+
+  point_in_time_recovery {
+    # Tokens are re-obtainable by reconnecting; a stale restored token is worse than none.
+    enabled = false
+  }
+}
+
 # The value is written out-of-band (scripts/put-slack-secret.sh) so the Slack
 # tokens never land in Terraform state.
 resource "aws_secretsmanager_secret" "slack" {
