@@ -38,6 +38,10 @@ def _messages(calls):
     return [call for call in calls if call[0] not in ("reaction_add", "reaction_remove")]
 
 
+def _update_call(channel: str, ts: str, text: str) -> tuple:
+    return ("update", {"channel": channel, "ts": ts, "text": text, "blocks": agent_worker._text_blocks(text)})
+
+
 @pytest.fixture
 def slack(monkeypatch):
     client = RecordingSlack()
@@ -59,7 +63,7 @@ def test_answer_replaces_placeholder(monkeypatch, slack):
     assert len(seen["session_id"]) == 64
     assert seen["channel"] == "C123"
     assert seen["message_ts"] == "1.2"
-    assert _messages(slack.calls) == [("update", {"channel": "C123", "ts": "1.2", "text": "Your name is Alice."})]
+    assert _messages(slack.calls) == [_update_call("C123", "1.2", "Your name is Alice.")]
 
 
 def test_auth_required_sends_private_link(monkeypatch, slack):
@@ -101,8 +105,8 @@ def test_slow_agent_call_gets_interim_update(monkeypatch, slack):
     agent_worker.process(JOB)
 
     assert _messages(slack.calls) == [
-        ("update", {"channel": "C123", "ts": "1.2", "text": agent_worker.INTERIM_TEXT}),
-        ("update", {"channel": "C123", "ts": "1.2", "text": "Your name is Alice."}),
+        _update_call("C123", "1.2", agent_worker.INTERIM_TEXT),
+        _update_call("C123", "1.2", "Your name is Alice."),
     ]
 
 
@@ -113,7 +117,7 @@ def test_fast_agent_call_gets_no_interim_update(monkeypatch, slack):
     agent_worker.process(JOB)
     time.sleep(0.1)  # long enough for a wrongly-firing timer to show up, well under the 5s delay
 
-    assert _messages(slack.calls) == [("update", {"channel": "C123", "ts": "1.2", "text": "fast"})]
+    assert _messages(slack.calls) == [_update_call("C123", "1.2", "fast")]
 
 
 def test_agent_failure_is_reported_not_raised(monkeypatch, slack):
@@ -186,4 +190,52 @@ def test_a_failed_reaction_call_does_not_break_the_reply(monkeypatch, slack):
     monkeypatch.setattr(agent_worker, "invoke_agent", lambda *a: {"message": "hi", "authRequired": None})
 
     agent_worker.process(JOB)  # must not raise
-    assert _messages(slack.calls) == [("update", {"channel": "C123", "ts": "1.2", "text": "hi"})]
+    assert _messages(slack.calls) == [_update_call("C123", "1.2", "hi")]
+
+
+def test_text_blocks_wraps_short_text_in_one_section(monkeypatch, slack):
+    monkeypatch.setattr(agent_worker, "invoke_agent", lambda *a: {"message": "Here you go.", "authRequired": None})
+    agent_worker.process(JOB)
+
+    update = _messages(slack.calls)[0][1]
+    assert update["text"] == "Here you go."
+    assert update["blocks"] == [{"type": "section", "text": {"type": "mrkdwn", "text": "Here you go."}}]
+
+
+def test_chunk_text_below_limit_is_a_single_chunk():
+    assert agent_worker._chunk_text("short answer") == ["short answer"]
+
+
+def test_chunk_text_splits_long_text_on_newlines():
+    limit = agent_worker.SECTION_TEXT_LIMIT
+    para_a = "a" * (limit - 10)
+    para_b = "b" * 500
+    text = f"{para_a}\n{para_b}"
+
+    chunks = agent_worker._chunk_text(text)
+
+    assert chunks == [para_a, para_b]
+    assert all(len(chunk) <= limit for chunk in chunks)
+    assert "\n".join(chunks) == text
+
+
+def test_chunk_text_hard_cuts_when_no_newline_is_available():
+    limit = agent_worker.SECTION_TEXT_LIMIT
+    text = "x" * (limit + 100)
+
+    chunks = agent_worker._chunk_text(text)
+
+    assert len(chunks) == 2
+    assert all(len(chunk) <= limit for chunk in chunks)
+    assert "".join(chunks) == text
+
+
+def test_text_blocks_produces_one_section_per_chunk():
+    limit = agent_worker.SECTION_TEXT_LIMIT
+    text = "x" * (limit + 100)
+
+    blocks = agent_worker._text_blocks(text)
+
+    assert len(blocks) == 2
+    assert all(block["type"] == "section" and block["text"]["type"] == "mrkdwn" for block in blocks)
+    assert all(len(block["text"]["text"]) <= limit for block in blocks)
