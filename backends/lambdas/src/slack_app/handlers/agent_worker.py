@@ -31,6 +31,10 @@ logger = logging.getLogger(__name__)
 INTERIM_DELAY_SECONDS = 6
 INTERIM_TEXT = "🔎 Still working on it — checking tools and thinking this through…"
 
+# Slack rejects a section block whose text exceeds this; long answers get split across
+# several section blocks rather than hitting an invalid_blocks error.
+SECTION_TEXT_LIMIT = 3000
+
 
 def handler(event: dict, context) -> dict:
     for record in event.get("Records", []):
@@ -118,9 +122,35 @@ def _send_connect_link(slack, job: dict, user_id: str, auth: dict) -> None:
 
 def _update(slack, job: dict, text: str) -> None:
     try:
-        slack.chat_update(channel=job["channel"], ts=job["placeholder_ts"], text=text)
+        slack.chat_update(channel=job["channel"], ts=job["placeholder_ts"], text=text, blocks=_text_blocks(text))
     except Exception:
         logger.exception("Failed to update Slack message")
+
+
+def _text_blocks(text: str) -> list[dict]:
+    """Wrap text in one or more mrkdwn section blocks.
+
+    `text` stays the top-level fallback Slack needs for notifications/accessibility --
+    this is purely about how the message renders in the channel itself.
+    """
+    return [{"type": "section", "text": {"type": "mrkdwn", "text": chunk}} for chunk in _chunk_text(text)]
+
+
+def _chunk_text(text: str) -> list[str]:
+    if len(text) <= SECTION_TEXT_LIMIT:
+        return [text] if text else [""]
+    chunks = []
+    remaining = text
+    while len(remaining) > SECTION_TEXT_LIMIT:
+        # Prefer breaking at the last newline within the limit, so a chunk boundary
+        # doesn't land mid-sentence; fall back to a hard cut if there isn't one.
+        cut = remaining.rfind("\n", 0, SECTION_TEXT_LIMIT)
+        if cut <= 0:
+            cut = SECTION_TEXT_LIMIT
+        chunks.append(remaining[:cut])
+        remaining = remaining[cut:].lstrip("\n")
+    chunks.append(remaining)
+    return chunks
 
 
 def _finish_reaction(slack, job: dict, name: str) -> None:
@@ -141,6 +171,8 @@ def _interim_update(slack, job: dict) -> None:
     # Runs on the timer thread; the agent call may finish (and this may even fire) after
     # process() has already moved on, so failures here are logged and otherwise ignored.
     try:
-        slack.chat_update(channel=job["channel"], ts=job["placeholder_ts"], text=INTERIM_TEXT)
+        slack.chat_update(
+            channel=job["channel"], ts=job["placeholder_ts"], text=INTERIM_TEXT, blocks=_text_blocks(INTERIM_TEXT)
+        )
     except Exception:
         logger.exception("Failed to post interim update")
