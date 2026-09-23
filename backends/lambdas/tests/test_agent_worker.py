@@ -1,3 +1,5 @@
+import time
+
 import pytest
 
 from slack_app.handlers import agent_worker
@@ -34,8 +36,8 @@ def slack(monkeypatch):
 def test_answer_replaces_placeholder(monkeypatch, slack):
     seen = {}
 
-    def fake_invoke(prompt, user_id, session_id):
-        seen.update(prompt=prompt, user_id=user_id, session_id=session_id)
+    def fake_invoke(prompt, user_id, session_id, channel, message_ts):
+        seen.update(prompt=prompt, user_id=user_id, session_id=session_id, channel=channel, message_ts=message_ts)
         return {"message": "Your name is Alice.", "authRequired": None}
 
     monkeypatch.setattr(agent_worker, "invoke_agent", fake_invoke)
@@ -43,6 +45,8 @@ def test_answer_replaces_placeholder(monkeypatch, slack):
 
     assert seen["user_id"] == "slack-T999-UALICE"
     assert len(seen["session_id"]) == 64
+    assert seen["channel"] == "C123"
+    assert seen["message_ts"] == "1.2"
     assert slack.calls == [("update", {"channel": "C123", "ts": "1.2", "text": "Your name is Alice."})]
 
 
@@ -71,6 +75,32 @@ def test_auth_required_sends_private_link(monkeypatch, slack):
     assert pending.runtime_user_id == "slack-T999-UALICE"
     assert pending.session_uri == "urn:s1"
     assert "LinkedIn" in slack.calls[1][1]["text"]
+
+
+def test_slow_agent_call_gets_interim_update(monkeypatch, slack):
+    monkeypatch.setattr(agent_worker, "INTERIM_DELAY_SECONDS", 0.05)
+
+    def slow_invoke(prompt, user_id, session_id, channel, message_ts):
+        time.sleep(0.2)
+        return {"message": "Your name is Alice.", "authRequired": None}
+
+    monkeypatch.setattr(agent_worker, "invoke_agent", slow_invoke)
+    agent_worker.process(JOB)
+
+    assert slack.calls == [
+        ("update", {"channel": "C123", "ts": "1.2", "text": agent_worker.INTERIM_TEXT}),
+        ("update", {"channel": "C123", "ts": "1.2", "text": "Your name is Alice."}),
+    ]
+
+
+def test_fast_agent_call_gets_no_interim_update(monkeypatch, slack):
+    monkeypatch.setattr(agent_worker, "INTERIM_DELAY_SECONDS", 5)
+    monkeypatch.setattr(agent_worker, "invoke_agent", lambda *a: {"message": "fast", "authRequired": None})
+
+    agent_worker.process(JOB)
+    time.sleep(0.1)  # long enough for a wrongly-firing timer to show up, well under the 5s delay
+
+    assert slack.calls == [("update", {"channel": "C123", "ts": "1.2", "text": "fast"})]
 
 
 def test_agent_failure_is_reported_not_raised(monkeypatch, slack):

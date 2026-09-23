@@ -1,7 +1,15 @@
-"""SQS consumer — calls the agent as the Slack user and writes the answer back to Slack."""
+"""SQS consumer — calls the agent as the Slack user and writes the answer back to Slack.
+
+invoke_agent is a single blocking call, so we pass the placeholder's channel/ts along and
+let the agent post its own live per-tool progress directly to Slack (see slack_progress.py
+in the agent). As a fallback for turns where the agent never gets to post anything (no tool
+calls, a missing bot token in the agent's environment, ...), a timer here nudges the
+placeholder once if the call is still running past INTERIM_DELAY_SECONDS.
+"""
 
 import json
 import logging
+import threading
 import time
 
 from slack_app.agent_client import invoke_agent
@@ -11,6 +19,9 @@ from slack_app.pending_auth import TTL_SECONDS, PendingAuth, new_nonce, pending_
 from slack_app.slack import slack_client
 
 logger = logging.getLogger(__name__)
+
+INTERIM_DELAY_SECONDS = 6
+INTERIM_TEXT = "🔎 Still working on it — checking tools and thinking this through…"
 
 
 def handler(event: dict, context) -> dict:
@@ -24,13 +35,18 @@ def process(job: dict) -> None:
     user_id = runtime_user_id(job["team_id"], job["user"])
     session_id = runtime_session_id(job["team_id"], job["channel"], job["thread_ts"], job["user"])
 
+    timer = threading.Timer(INTERIM_DELAY_SECONDS, _interim_update, args=(slack, job))
+    timer.daemon = True
+    timer.start()
     try:
-        result = invoke_agent(job["text"], user_id, session_id)
+        result = invoke_agent(job["text"], user_id, session_id, job["channel"], job["placeholder_ts"])
     except Exception:
         # Don't re-raise: an SQS retry would run the agent again and double-post.
         logger.exception("Agent invocation failed")
         _update(slack, job, "⚠️ Sorry, something went wrong while talking to the agent. Please try again.")
         return
+    finally:
+        timer.cancel()
 
     auth = result.get("authRequired")
     if auth:
@@ -94,3 +110,12 @@ def _update(slack, job: dict, text: str) -> None:
         slack.chat_update(channel=job["channel"], ts=job["placeholder_ts"], text=text)
     except Exception:
         logger.exception("Failed to update Slack message")
+
+
+def _interim_update(slack, job: dict) -> None:
+    # Runs on the timer thread; the agent call may finish (and this may even fire) after
+    # process() has already moved on, so failures here are logged and otherwise ignored.
+    try:
+        slack.chat_update(channel=job["channel"], ts=job["placeholder_ts"], text=INTERIM_TEXT)
+    except Exception:
+        logger.exception("Failed to post interim update")

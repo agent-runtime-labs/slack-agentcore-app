@@ -37,6 +37,7 @@ module "agent_runtime" {
       Action   = ["dynamodb:GetItem", "dynamodb:PutItem", "dynamodb:DeleteItem"]
       Resource = aws_dynamodb_table.cimd_tokens.arn
     },
+    merge({ Sid = "ReadSlackSecretForProgress" }, local.read_slack_secret),
   ]
 
   environment_variables = {
@@ -46,6 +47,9 @@ module "agent_runtime" {
     LINKEDIN_PROVIDER_NAME = var.linkedin_provider_name
     GITHUB_PROVIDER_NAME   = var.github_provider_name
     OAUTH2_RETURN_URL      = local.oauth_callback_url
+    # Lets the agent post live per-tool progress directly to the Slack placeholder
+    # message instead of waiting for the whole turn to finish (see slack_progress.py).
+    SLACK_SECRET_ARN = aws_secretsmanager_secret.slack.arn
 
     # CIMD remote MCP servers: no client ID or secret, just the providers to switch on
     # and the URL that identifies this app to their authorization servers.
