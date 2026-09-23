@@ -124,7 +124,7 @@ def _update(slack, job: dict, text: str) -> None:
 
 
 def _finish_reaction(slack, job: dict, name: str) -> None:
-    """Swap the ⏳ reaction on the user's message for the outcome reaction.
+    """Swap the 👀 reaction on the user's message for the outcome reaction.
 
     add_reaction/remove_reaction are already best-effort (a missing reactions:write scope
     or any API error is logged, not raised), and older queued jobs may predate the

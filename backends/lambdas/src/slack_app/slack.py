@@ -16,9 +16,11 @@ _MENTION = re.compile(r"<@[A-Z0-9]+>")
 
 # Reaction names (Slack emoji shortcodes, no colons) for the lifecycle of a request:
 # added the moment we receive it, then swapped for one of the outcome reactions once
-# agent_worker finishes.
-REACTION_WORKING = "hourglass_flowing_sand"
-REACTION_DONE = "white_check_mark"
+# agent_worker finishes. REACTION_DONE deliberately isn't a check mark: this is an AI
+# reply in a channel with human collaborators, and a check mark reads as "verified
+# correct" rather than "a reply was posted" -- speech_balloon makes no such claim.
+REACTION_WORKING = "eyes"
+REACTION_DONE = "speech_balloon"
 REACTION_ERROR = "warning"
 REACTION_AUTH_REQUIRED = "lock"
 

@@ -20,7 +20,7 @@ The manifest configures:
 | Bot scopes | `app_mentions:read` | Receive `@bot` mentions in channels. |
 | | `chat:write` | Post the placeholder, update it, and send ephemeral connect links. |
 | | `im:history`, `im:read`, `im:write` | Receive and answer direct messages. |
-| | `reactions:write` | React to the user's message (⏳ then ✅/⚠️/🔒) while it's being handled. |
+| | `reactions:write` | React to the user's message (👀 then 💬/⚠️/🔒) while it's being handled. |
 | Bot events | `app_mention`, `message.im` | The only two events the handler processes. |
 | App Home | Messages tab enabled, not read-only | Lets users DM the bot. |
 
