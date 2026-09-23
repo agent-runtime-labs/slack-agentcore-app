@@ -1,9 +1,10 @@
 """SQS consumer — calls the agent as the Slack user and writes the answer back to Slack.
 
-invoke_agent is a single blocking call (AgentCore Runtime doesn't stream progress back to
-us), so a slow turn would otherwise leave the "Thinking…" placeholder looking frozen. We run
-a timer alongside the call and, if it's still running past INTERIM_DELAY_SECONDS, nudge the
-placeholder once so the user knows we're still working.
+invoke_agent is a single blocking call, so we pass the placeholder's channel/ts along and
+let the agent post its own live per-tool progress directly to Slack (see slack_progress.py
+in the agent). As a fallback for turns where the agent never gets to post anything (no tool
+calls, a missing bot token in the agent's environment, ...), a timer here nudges the
+placeholder once if the call is still running past INTERIM_DELAY_SECONDS.
 """
 
 import json
@@ -38,7 +39,7 @@ def process(job: dict) -> None:
     timer.daemon = True
     timer.start()
     try:
-        result = invoke_agent(job["text"], user_id, session_id)
+        result = invoke_agent(job["text"], user_id, session_id, job["channel"], job["placeholder_ts"])
     except Exception:
         # Don't re-raise: an SQS retry would run the agent again and double-post.
         logger.exception("Agent invocation failed")

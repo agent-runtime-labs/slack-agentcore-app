@@ -1,7 +1,11 @@
 """Slack assistant running on Amazon Bedrock AgentCore Runtime.
 
 Request payload (sent by the agent_worker Lambda):
-    {"prompt": "...", "userId": "slack-T..-U..", "sessionId": "<64 hex chars>"}
+    {"prompt": "...", "userId": "slack-T..-U..", "sessionId": "<64 hex chars>",
+     "channel": "C...", "messageTs": "..."}
+`channel`/`messageTs` identify the Slack placeholder message; they're optional and only
+used to post live per-tool progress (see slack_progress.py) -- their absence never fails
+the request.
 Response:
     {"message": "...", "authRequired": null | {"authorizationUrl": "...", "sessionUri": "...",
                                                "cimd": {...}}}
@@ -25,6 +29,7 @@ from cimd import build_cimd_tools, enabled_providers
 from conversations import ConversationCache
 from github import build_github_tool
 from linkedin import build_linkedin_tool, workload_token_provider
+from slack_progress import ProgressReporter
 
 logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO"))
 logger = logging.getLogger("slack_agent")
@@ -87,12 +92,14 @@ def invoke(payload: dict, context: RequestContext) -> dict:
         *build_cimd_tools(user_id, auth_state),
     ]
 
+    progress = ProgressReporter(payload.get("channel"), payload.get("messageTs"))
+
     agent = Agent(
         model=model,
         system_prompt=SYSTEM_PROMPT,
         tools=tools,
         messages=history,
-        callback_handler=None,
+        callback_handler=progress.on_event,
     )
 
     logger.info("Invoking agent for session %s with %d prior messages", session_id[:8], len(history))

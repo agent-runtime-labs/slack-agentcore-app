@@ -21,9 +21,21 @@ def _agentcore():
     )
 
 
-def invoke_agent(prompt: str, runtime_user_id: str, session_id: str) -> dict:
-    """Returns the agent's JSON response: {"message": str, "authRequired": dict | None}."""
-    payload = json.dumps({"prompt": prompt, "userId": runtime_user_id, "sessionId": session_id})
+def invoke_agent(prompt: str, runtime_user_id: str, session_id: str, channel: str, message_ts: str) -> dict:
+    """Returns the agent's JSON response: {"message": str, "authRequired": dict | None}.
+
+    channel/message_ts identify the Slack placeholder message so the agent can post
+    live per-tool progress to it directly (see slack_progress.py in the agent).
+    """
+    payload = json.dumps(
+        {
+            "prompt": prompt,
+            "userId": runtime_user_id,
+            "sessionId": session_id,
+            "channel": channel,
+            "messageTs": message_ts,
+        }
+    )
 
     local_url = os.getenv("AGENT_LOCAL_URL")
     if local_url:
