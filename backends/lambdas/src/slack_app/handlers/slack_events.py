@@ -1,6 +1,6 @@
 """POST /slack/events — Slack Events API entry point.
 
-Must answer within 3 seconds, so it only verifies, posts a placeholder and
+Must answer within 3 seconds, so it only verifies, reacts, posts a placeholder and
 queues the real work for agent_worker.
 """
 
@@ -8,7 +8,7 @@ import json
 import logging
 
 from slack_app.apigw import header, json_response, raw_body
-from slack_app.slack import clean_text, should_handle, slack_client, verify_request
+from slack_app.slack import REACTION_WORKING, add_reaction, clean_text, should_handle, slack_client, verify_request
 from slack_app.work_queue import enqueue
 
 logger = logging.getLogger(__name__)
@@ -42,9 +42,15 @@ def handler(event: dict, context) -> dict:
 
     team_id = payload.get("team_id") or slack_event.get("team", "")
     channel = slack_event["channel"]
-    thread_ts = slack_event.get("thread_ts") or slack_event["ts"]
+    user_message_ts = slack_event["ts"]
+    thread_ts = slack_event.get("thread_ts") or user_message_ts
 
-    placeholder = slack_client().chat_postMessage(channel=channel, thread_ts=thread_ts, text="🤔 Thinking…")
+    slack = slack_client()
+    # Near-instant feedback that we got the message, before the 3-second budget is spent
+    # on anything else. agent_worker swaps this for an outcome reaction once it's done.
+    add_reaction(slack, channel, user_message_ts, REACTION_WORKING)
+
+    placeholder = slack.chat_postMessage(channel=channel, thread_ts=thread_ts, text="🤔 Thinking…")
 
     job = {
         "team_id": team_id,
@@ -53,6 +59,7 @@ def handler(event: dict, context) -> dict:
         "thread_ts": thread_ts,
         "text": text,
         "placeholder_ts": placeholder["ts"],
+        "user_message_ts": user_message_ts,
     }
     enqueue(job, group_id=f"{channel}-{thread_ts}", dedup_id=payload.get("event_id") or slack_event["ts"])
     logger.info("Queued event %s from user %s", payload.get("event_id"), slack_event["user"])

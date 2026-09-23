@@ -16,7 +16,15 @@ from slack_app.agent_client import invoke_agent
 from slack_app.config import public_base_url
 from slack_app.identity import runtime_session_id, runtime_user_id
 from slack_app.pending_auth import TTL_SECONDS, PendingAuth, new_nonce, pending_auth_store
-from slack_app.slack import slack_client
+from slack_app.slack import (
+    REACTION_AUTH_REQUIRED,
+    REACTION_DONE,
+    REACTION_ERROR,
+    REACTION_WORKING,
+    add_reaction,
+    remove_reaction,
+    slack_client,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -44,6 +52,7 @@ def process(job: dict) -> None:
         # Don't re-raise: an SQS retry would run the agent again and double-post.
         logger.exception("Agent invocation failed")
         _update(slack, job, "⚠️ Sorry, something went wrong while talking to the agent. Please try again.")
+        _finish_reaction(slack, job, REACTION_ERROR)
         return
     finally:
         timer.cancel()
@@ -56,8 +65,10 @@ def process(job: dict) -> None:
             f"🔐 <@{job['user']}> I need access to your {provider} account first. "
             "I've sent you a private link — ask me again once you've connected."
         )
+        _finish_reaction(slack, job, REACTION_AUTH_REQUIRED)
     else:
         text = result.get("message") or result.get("error") or "I didn't get a response."
+        _finish_reaction(slack, job, REACTION_DONE)
 
     _update(slack, job, text)
 
@@ -110,6 +121,20 @@ def _update(slack, job: dict, text: str) -> None:
         slack.chat_update(channel=job["channel"], ts=job["placeholder_ts"], text=text)
     except Exception:
         logger.exception("Failed to update Slack message")
+
+
+def _finish_reaction(slack, job: dict, name: str) -> None:
+    """Swap the ⏳ reaction on the user's message for the outcome reaction.
+
+    add_reaction/remove_reaction are already best-effort (a missing reactions:write scope
+    or any API error is logged, not raised), and older queued jobs may predate the
+    user_message_ts field, so this is a no-op rather than a failure in either case.
+    """
+    ts = job.get("user_message_ts")
+    if not ts:
+        return
+    remove_reaction(slack, job["channel"], ts, REACTION_WORKING)
+    add_reaction(slack, job["channel"], ts, name)
 
 
 def _interim_update(slack, job: dict) -> None:

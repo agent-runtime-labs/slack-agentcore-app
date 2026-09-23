@@ -20,6 +20,7 @@ The manifest configures:
 | Bot scopes | `app_mentions:read` | Receive `@bot` mentions in channels. |
 | | `chat:write` | Post the placeholder, update it, and send ephemeral connect links. |
 | | `im:history`, `im:read`, `im:write` | Receive and answer direct messages. |
+| | `reactions:write` | React to the user's message (⏳ then ✅/⚠️/🔒) while it's being handled. |
 | Bot events | `app_mention`, `message.im` | The only two events the handler processes. |
 | App Home | Messages tab enabled, not read-only | Lets users DM the bot. |
 
@@ -27,7 +28,7 @@ The manifest configures:
 <summary>Prefer clicking through the UI?</summary>
 
 1. **Create New App → From scratch**, then name it and pick a workspace.
-2. **OAuth & Permissions → Bot Token Scopes**: add the five scopes above.
+2. **OAuth & Permissions → Bot Token Scopes**: add the six scopes above.
 3. **App Home**: enable the *Messages Tab*, and tick *Allow users to send Slash commands and messages from the messages tab*.
 4. **Event Subscriptions**: turn it on, set the Request URL, and add the bot events `app_mention` and `message.im`.
 </details>
