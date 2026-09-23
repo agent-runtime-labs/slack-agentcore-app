@@ -14,6 +14,13 @@ def queued(monkeypatch):
     return jobs
 
 
+@pytest.fixture
+def reactions(monkeypatch):
+    calls = []
+    monkeypatch.setattr(slack_events, "add_reaction", lambda client, channel, ts, name: calls.append((channel, ts, name)))
+    return calls
+
+
 def test_rejects_bad_signature(queued):
     event = signed_event(mention_payload(), secret="wrong")
     assert slack_events.handler(event, None)["statusCode"] == 401
@@ -46,8 +53,14 @@ def test_mention_is_queued_with_clean_text(queued):
     assert job["team_id"] == "T999"
     assert job["thread_ts"] == "1726500000.000100"
     assert job["placeholder_ts"]
+    assert job["user_message_ts"] == "1726500000.000100"
     assert group_id == "C123-1726500000.000100"
     assert dedup_id == "Ev1"
+
+
+def test_mention_gets_a_working_reaction(queued, reactions):
+    slack_events.handler(signed_event(mention_payload()), None)
+    assert reactions == [("C123", "1726500000.000100", slack_events.REACTION_WORKING)]
 
 
 def test_thread_reply_keeps_thread_ts(queued):

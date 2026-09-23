@@ -21,6 +21,7 @@ oauth_config:
       - im:history
       - im:read
       - im:write
+      - reactions:write
 settings:
   event_subscriptions:
     request_url: https://7b58-2405-201-6807-d1d3-b9b9-1a2e-4895-2ed.ngrok-free.app/slack/events

@@ -12,6 +12,7 @@ JOB = {
     "thread_ts": "1.1",
     "text": "what's my LinkedIn name?",
     "placeholder_ts": "1.2",
+    "user_message_ts": "1.0",
 }
 
 
@@ -24,6 +25,17 @@ class RecordingSlack:
 
     def chat_postEphemeral(self, **kwargs):  # noqa: N802
         self.calls.append(("ephemeral", kwargs))
+
+    def reactions_add(self, **kwargs):
+        self.calls.append(("reaction_add", kwargs))
+
+    def reactions_remove(self, **kwargs):
+        self.calls.append(("reaction_remove", kwargs))
+
+
+def _messages(calls):
+    """Non-reaction calls, for tests that only care about the message content."""
+    return [call for call in calls if call[0] not in ("reaction_add", "reaction_remove")]
 
 
 @pytest.fixture
@@ -47,7 +59,7 @@ def test_answer_replaces_placeholder(monkeypatch, slack):
     assert len(seen["session_id"]) == 64
     assert seen["channel"] == "C123"
     assert seen["message_ts"] == "1.2"
-    assert slack.calls == [("update", {"channel": "C123", "ts": "1.2", "text": "Your name is Alice."})]
+    assert _messages(slack.calls) == [("update", {"channel": "C123", "ts": "1.2", "text": "Your name is Alice."})]
 
 
 def test_auth_required_sends_private_link(monkeypatch, slack):
@@ -61,9 +73,10 @@ def test_auth_required_sends_private_link(monkeypatch, slack):
     )
     agent_worker.process(JOB)
 
-    kinds = [kind for kind, _ in slack.calls]
+    messages = _messages(slack.calls)
+    kinds = [kind for kind, _ in messages]
     assert kinds == ["ephemeral", "update"]
-    ephemeral = slack.calls[0][1]
+    ephemeral = messages[0][1]
     assert ephemeral["user"] == "UALICE"
     link = ephemeral["blocks"][0]["accessory"]["url"]
     assert link.startswith("http://localhost:8081/oauth2/start?nonce=")
@@ -74,7 +87,7 @@ def test_auth_required_sends_private_link(monkeypatch, slack):
     pending = pending_auth_store().get(nonce)
     assert pending.runtime_user_id == "slack-T999-UALICE"
     assert pending.session_uri == "urn:s1"
-    assert "LinkedIn" in slack.calls[1][1]["text"]
+    assert "LinkedIn" in messages[1][1]["text"]
 
 
 def test_slow_agent_call_gets_interim_update(monkeypatch, slack):
@@ -87,7 +100,7 @@ def test_slow_agent_call_gets_interim_update(monkeypatch, slack):
     monkeypatch.setattr(agent_worker, "invoke_agent", slow_invoke)
     agent_worker.process(JOB)
 
-    assert slack.calls == [
+    assert _messages(slack.calls) == [
         ("update", {"channel": "C123", "ts": "1.2", "text": agent_worker.INTERIM_TEXT}),
         ("update", {"channel": "C123", "ts": "1.2", "text": "Your name is Alice."}),
     ]
@@ -100,7 +113,7 @@ def test_fast_agent_call_gets_no_interim_update(monkeypatch, slack):
     agent_worker.process(JOB)
     time.sleep(0.1)  # long enough for a wrongly-firing timer to show up, well under the 5s delay
 
-    assert slack.calls == [("update", {"channel": "C123", "ts": "1.2", "text": "fast"})]
+    assert _messages(slack.calls) == [("update", {"channel": "C123", "ts": "1.2", "text": "fast"})]
 
 
 def test_agent_failure_is_reported_not_raised(monkeypatch, slack):
@@ -109,5 +122,68 @@ def test_agent_failure_is_reported_not_raised(monkeypatch, slack):
 
     monkeypatch.setattr(agent_worker, "invoke_agent", boom)
     agent_worker.handler({"Records": [{"body": __import__("json").dumps(JOB)}]}, None)
-    assert slack.calls[0][0] == "update"
-    assert "went wrong" in slack.calls[0][1]["text"]
+    messages = _messages(slack.calls)
+    assert messages[0][0] == "update"
+    assert "went wrong" in messages[0][1]["text"]
+
+
+def _reactions(calls):
+    return [(kind, kwargs["name"]) for kind, kwargs in calls if kind in ("reaction_add", "reaction_remove")]
+
+
+def test_successful_reply_swaps_hourglass_for_check_mark(monkeypatch, slack):
+    monkeypatch.setattr(agent_worker, "invoke_agent", lambda *a: {"message": "hi", "authRequired": None})
+    agent_worker.process(JOB)
+
+    assert _reactions(slack.calls) == [
+        ("reaction_remove", agent_worker.REACTION_WORKING),
+        ("reaction_add", agent_worker.REACTION_DONE),
+    ]
+    for kind, kwargs in slack.calls:
+        if kind in ("reaction_add", "reaction_remove"):
+            assert kwargs["channel"] == "C123"
+            assert kwargs["timestamp"] == "1.0"
+
+
+def test_auth_required_swaps_hourglass_for_lock(monkeypatch, slack):
+    monkeypatch.setattr(
+        agent_worker,
+        "invoke_agent",
+        lambda *a: {"message": "x", "authRequired": {"provider": "LinkedIn", "authorizationUrl": "https://li/auth"}},
+    )
+    agent_worker.process(JOB)
+
+    assert _reactions(slack.calls) == [
+        ("reaction_remove", agent_worker.REACTION_WORKING),
+        ("reaction_add", agent_worker.REACTION_AUTH_REQUIRED),
+    ]
+
+
+def test_failure_swaps_hourglass_for_warning(monkeypatch, slack):
+    monkeypatch.setattr(agent_worker, "invoke_agent", lambda *a: (_ for _ in ()).throw(RuntimeError("boom")))
+    agent_worker.process(JOB)
+
+    assert _reactions(slack.calls) == [
+        ("reaction_remove", agent_worker.REACTION_WORKING),
+        ("reaction_add", agent_worker.REACTION_ERROR),
+    ]
+
+
+def test_no_reaction_swap_without_user_message_ts(monkeypatch, slack):
+    job = {k: v for k, v in JOB.items() if k != "user_message_ts"}
+    monkeypatch.setattr(agent_worker, "invoke_agent", lambda *a: {"message": "hi", "authRequired": None})
+    agent_worker.process(job)
+
+    assert _reactions(slack.calls) == []
+
+
+def test_a_failed_reaction_call_does_not_break_the_reply(monkeypatch, slack):
+    def boom_reaction(**kwargs):
+        raise RuntimeError("missing scope")
+
+    slack.reactions_add = boom_reaction
+    slack.reactions_remove = boom_reaction
+    monkeypatch.setattr(agent_worker, "invoke_agent", lambda *a: {"message": "hi", "authRequired": None})
+
+    agent_worker.process(JOB)  # must not raise
+    assert _messages(slack.calls) == [("update", {"channel": "C123", "ts": "1.2", "text": "hi"})]
