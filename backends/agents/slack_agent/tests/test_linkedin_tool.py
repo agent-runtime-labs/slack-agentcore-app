@@ -98,6 +98,33 @@ def test_workload_token_local_fallback(monkeypatch):
     assert linkedin.workload_token_provider(None, "slack-T1-U1")() == "local-wl:slack-T1-U1"
 
 
+def test_check_connection_reports_connected(calls):
+    _, responses = calls
+    responses["fetch"].append({"accessToken": "li-token"})
+
+    result = linkedin.check_connection(lambda: "wat-alice")
+
+    assert result == {"connected": True, "authorizationUrl": None, "sessionUri": None}
+
+
+def test_check_connection_reports_not_connected(calls):
+    _, responses = calls
+    responses["fetch"].append({"authorizationUrl": "https://li/auth", "sessionUri": "urn:s1"})
+
+    result = linkedin.check_connection(lambda: "wat-alice")
+
+    assert result == {"connected": False, "authorizationUrl": "https://li/auth", "sessionUri": "urn:s1"}
+
+
+def test_check_connection_failure_reports_not_connected(monkeypatch):
+    def boom():
+        raise RuntimeError("no workload token")
+
+    result = linkedin.check_connection(boom)
+
+    assert result == {"connected": False, "authorizationUrl": None, "sessionUri": None}
+
+
 def test_conversation_cache_is_bounded_and_isolated():
     cache = ConversationCache(max_items=2)
     cache.put("a", [{"role": "user"}])

@@ -12,6 +12,7 @@ import logging
 import threading
 import time
 
+from slack_app import app_home
 from slack_app.agent_client import invoke_agent
 from slack_app.config import public_base_url
 from slack_app.identity import runtime_session_id, runtime_user_id
@@ -34,7 +35,11 @@ INTERIM_TEXT = "🔎 Still working on it — checking tools and thinking this th
 
 def handler(event: dict, context) -> dict:
     for record in event.get("Records", []):
-        process(json.loads(record["body"]))
+        job = json.loads(record["body"])
+        if job.get("type") == "app_home":
+            app_home.publish_app_home(job["team_id"], job["user"])
+        else:
+            process(job)
     return {"batchItemFailures": []}
 
 
@@ -88,6 +93,7 @@ def _send_connect_link(slack, job: dict, user_id: str, auth: dict) -> None:
         slack_user=job["user"],
         thread_ts=job["thread_ts"],
         expires_at=int(time.time()) + TTL_SECONDS,
+        team_id=job["team_id"],
     )
     pending_auth_store().put(pending)
     link = f"{public_base_url()}/oauth2/start?nonce={pending.nonce}"

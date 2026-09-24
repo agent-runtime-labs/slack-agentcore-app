@@ -1,3 +1,4 @@
+import json
 import time
 
 import pytest
@@ -121,7 +122,7 @@ def test_agent_failure_is_reported_not_raised(monkeypatch, slack):
         raise RuntimeError("runtime down")
 
     monkeypatch.setattr(agent_worker, "invoke_agent", boom)
-    agent_worker.handler({"Records": [{"body": __import__("json").dumps(JOB)}]}, None)
+    agent_worker.handler({"Records": [{"body": json.dumps(JOB)}]}, None)
     messages = _messages(slack.calls)
     assert messages[0][0] == "update"
     assert "went wrong" in messages[0][1]["text"]
@@ -187,3 +188,15 @@ def test_a_failed_reaction_call_does_not_break_the_reply(monkeypatch, slack):
 
     agent_worker.process(JOB)  # must not raise
     assert _messages(slack.calls) == [("update", {"channel": "C123", "ts": "1.2", "text": "hi"})]
+
+
+def test_app_home_job_is_routed_to_app_home_not_the_chat_flow(monkeypatch, slack):
+    calls = []
+    monkeypatch.setattr(agent_worker.app_home, "publish_app_home", lambda team_id, user: calls.append((team_id, user)))
+    monkeypatch.setattr(agent_worker, "invoke_agent", lambda *a: (_ for _ in ()).throw(AssertionError("chat flow ran")))
+
+    job = {"type": "app_home", "team_id": "T999", "user": "UALICE"}
+    agent_worker.handler({"Records": [{"body": json.dumps(job)}]}, None)
+
+    assert calls == [("T999", "UALICE")]
+    assert slack.calls == []

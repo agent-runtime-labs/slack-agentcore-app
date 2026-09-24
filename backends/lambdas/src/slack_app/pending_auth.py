@@ -41,6 +41,9 @@ class PendingAuth:
     expires_at: int
     # None for AgentCore Identity consents. See docs/cimd-providers.md for the schema.
     cimd: dict | None = None
+    # Only set for links generated from the App Home tab (channel/thread_ts are empty
+    # there, so this is how oauth_callback finds its way back to republish Home).
+    team_id: str = ""
 
     def expired(self, now: float | None = None) -> bool:
         return (now or time.time()) >= self.expires_at

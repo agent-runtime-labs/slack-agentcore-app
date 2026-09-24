@@ -219,3 +219,38 @@ def test_tools_are_named_after_the_provider(mcp_calls):
 def test_no_token_table_means_no_cimd_tools(monkeypatch):
     monkeypatch.setattr(config, "CIMD_TOKEN_TABLE", "")
     assert cimd_tool.build_cimd_tools(USER, AuthState()) == []
+
+
+def test_check_connections_reports_connected_provider():
+    results = cimd_tool.check_cimd_connections(USER, FakeStore(stored()))
+
+    assert results == [
+        {"key": "linear", "displayName": "Linear", "connected": True, "authorizationUrl": None, "cimd": None}
+    ]
+
+
+def test_check_connections_builds_a_fresh_consent_when_not_connected():
+    results = cimd_tool.check_cimd_connections(USER, FakeStore())
+
+    assert len(results) == 1
+    result = results[0]
+    assert result["key"] == "linear"
+    assert result["connected"] is False
+    assert result["authorizationUrl"].startswith(SERVER.authorization_endpoint)
+    assert result["cimd"]["provider"] == "linear"
+    assert result["cimd"]["tokenEndpoint"] == SERVER.token_endpoint
+
+
+def test_check_connections_empty_when_no_providers_enabled(monkeypatch):
+    monkeypatch.setattr(config, "CIMD_PROVIDERS", [])
+    assert cimd_tool.check_cimd_connections(USER, FakeStore()) == []
+
+
+def test_check_connections_reports_not_connected_on_discovery_failure(monkeypatch):
+    monkeypatch.setattr(cimd_tool, "discover", lambda provider: (_ for _ in ()).throw(RuntimeError("unreachable")))
+
+    results = cimd_tool.check_cimd_connections(USER, FakeStore())
+
+    assert results == [
+        {"key": "linear", "displayName": "Linear", "connected": False, "authorizationUrl": None, "cimd": None}
+    ]

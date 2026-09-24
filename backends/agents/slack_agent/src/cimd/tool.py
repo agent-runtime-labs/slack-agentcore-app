@@ -139,6 +139,48 @@ def build_cimd_tool(provider: CimdProvider, user_id: str, auth_state: AuthState,
     return tool(use_provider, name=provider.tool_name, description=_tool_description(provider))
 
 
+def check_cimd_connections(user_id: str, store: DynamoTokenStore | None = None) -> list[dict]:
+    """Live status for every enabled CIMD provider, no LLM/MCP call involved.
+
+    Used by the App Home tab (main.py's "connections" mode). Reuses discover() and
+    _usable_token() from the tool above, so "connected" matches what use_<provider>
+    would actually use -- including a refresh if the stored token had expired. A
+    disconnected provider gets a fresh PKCE authorization request built right away so
+    the caller has a ready-to-use connect link without a second round trip.
+    """
+    providers = enabled_providers()
+    if not providers:
+        return []
+
+    store = store or token_store()
+    results = []
+    for provider in providers:
+        try:
+            server = discover(provider)
+            token = _usable_token(provider, server, user_id, store)
+            if token:
+                results.append(
+                    {"key": provider.key, "displayName": provider.display_name, "connected": True, "authorizationUrl": None, "cimd": None}
+                )
+            else:
+                consent = oauth.consent_request(provider, server)
+                results.append(
+                    {
+                        "key": provider.key,
+                        "displayName": provider.display_name,
+                        "connected": False,
+                        "authorizationUrl": consent.authorization_url,
+                        "cimd": consent.as_payload(),
+                    }
+                )
+        except Exception:
+            logger.exception("%s connection check failed", provider.key)
+            results.append(
+                {"key": provider.key, "displayName": provider.display_name, "connected": False, "authorizationUrl": None, "cimd": None}
+            )
+    return results
+
+
 def _usable_token(
     provider: CimdProvider, server: AuthorizationServer, user_id: str, store: DynamoTokenStore
 ) -> StoredToken | None:

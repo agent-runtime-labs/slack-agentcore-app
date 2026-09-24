@@ -1,5 +1,6 @@
 """Invoke the agent: AgentCore Runtime in AWS, or the local container under Tilt."""
 
+import hashlib
 import json
 import os
 import urllib.request
@@ -47,6 +48,32 @@ def invoke_agent(prompt: str, runtime_user_id: str, session_id: str, channel: st
         runtimeSessionId=session_id,
         # Requires bedrock-agentcore:InvokeAgentRuntimeForUser. AgentCore mints a
         # workload access token bound to this user and hands it to the agent.
+        runtimeUserId=runtime_user_id,
+        contentType="application/json",
+        accept="application/json",
+        payload=payload.encode("utf-8"),
+    )
+    return json.loads(response["response"].read())
+
+
+def check_connections(runtime_user_id: str) -> dict:
+    """Ask the agent for live connect status of every provider (LinkedIn, GitHub, CIMD).
+
+    This is the agent's "connections" mode (see main.py): it bypasses the chat LLM
+    entirely, so it's cheap enough to call every time the Slack App Home tab is opened.
+    The session id is synthetic -- this never touches conversation history.
+    """
+    session_id = hashlib.sha256(f"connections|{runtime_user_id}".encode("utf-8")).hexdigest()
+    payload = json.dumps({"mode": "connections", "userId": runtime_user_id, "sessionId": session_id})
+
+    local_url = os.getenv("AGENT_LOCAL_URL")
+    if local_url:
+        return _invoke_local(local_url, payload, session_id)
+
+    response = _agentcore().invoke_agent_runtime(
+        agentRuntimeArn=os.environ["AGENT_RUNTIME_ARN"],
+        qualifier="DEFAULT",
+        runtimeSessionId=session_id,
         runtimeUserId=runtime_user_id,
         contentType="application/json",
         accept="application/json",

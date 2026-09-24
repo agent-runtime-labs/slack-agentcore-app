@@ -70,6 +70,28 @@ def call_userinfo(access_token: str) -> tuple[int, dict]:
         return err.code, {"error": err.reason}
 
 
+def check_connection(get_workload_token: Callable[[], str]) -> dict:
+    """Live status check, no LLM involved: does the user have a usable LinkedIn token?
+
+    Used by the App Home tab (main.py's "connections" mode) to show connect status
+    without spending a chat turn. Shares fetch_token with the tool above, so the
+    result is exactly what get_my_linkedin_profile would see.
+    """
+    try:
+        token = fetch_token(get_workload_token())
+    except Exception:
+        logger.exception("LinkedIn connection check failed")
+        return {"connected": False, "authorizationUrl": None, "sessionUri": None}
+
+    if token.get("accessToken"):
+        return {"connected": True, "authorizationUrl": None, "sessionUri": None}
+    return {
+        "connected": False,
+        "authorizationUrl": token.get("authorizationUrl"),
+        "sessionUri": token.get("sessionUri"),
+    }
+
+
 def build_linkedin_tool(get_workload_token: Callable[[], str], auth_state: AuthState):
     @tool
     def get_my_linkedin_profile() -> str:
