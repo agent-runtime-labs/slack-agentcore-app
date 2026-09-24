@@ -33,7 +33,20 @@ def handler(event: dict, context) -> dict:
         return OK
 
     slack_event = payload.get("event") or {}
-    if payload.get("type") != "event_callback" or not should_handle(slack_event):
+    if payload.get("type") != "event_callback":
+        return OK
+
+    if slack_event.get("type") == "app_home_opened" and slack_event.get("tab") == "home":
+        team_id = payload.get("team_id") or slack_event.get("team", "")
+        user = slack_event["user"]
+        enqueue(
+            {"type": "app_home", "team_id": team_id, "user": user},
+            group_id=f"home-{team_id}-{user}",
+            dedup_id=payload.get("event_id") or f"{user}-{slack_event.get('event_ts', '')}",
+        )
+        return OK
+
+    if not should_handle(slack_event):
         return OK
 
     text = clean_text(slack_event.get("text", ""))

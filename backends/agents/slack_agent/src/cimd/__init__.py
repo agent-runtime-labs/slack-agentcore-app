@@ -24,6 +24,6 @@ Terraform change, no secret anywhere. See docs/cimd-providers.md.
 """
 
 from cimd.providers import PROVIDERS, CimdProvider, enabled_providers
-from cimd.tool import build_cimd_tools
+from cimd.tool import build_cimd_tools, check_cimd_connections
 
-__all__ = ["PROVIDERS", "CimdProvider", "enabled_providers", "build_cimd_tools"]
+__all__ = ["PROVIDERS", "CimdProvider", "enabled_providers", "build_cimd_tools", "check_cimd_connections"]

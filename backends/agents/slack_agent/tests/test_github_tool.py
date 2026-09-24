@@ -94,3 +94,30 @@ def test_max_tokens_reached_is_reported_without_swallowing_success(calls):
 
     assert output.startswith("ERROR:")
     assert "too much output" in output
+
+
+def test_check_connection_reports_connected(calls):
+    _, responses = calls
+    responses["fetch"].append({"accessToken": "gh-token"})
+
+    result = github.check_connection(lambda: "wat-alice")
+
+    assert result == {"connected": True, "authorizationUrl": None, "sessionUri": None}
+
+
+def test_check_connection_reports_not_connected(calls):
+    _, responses = calls
+    responses["fetch"].append({"authorizationUrl": "https://gh/auth", "sessionUri": "urn:s1"})
+
+    result = github.check_connection(lambda: "wat-alice")
+
+    assert result == {"connected": False, "authorizationUrl": "https://gh/auth", "sessionUri": "urn:s1"}
+
+
+def test_check_connection_failure_reports_not_connected():
+    def boom():
+        raise RuntimeError("no workload token")
+
+    result = github.check_connection(boom)
+
+    assert result == {"connected": False, "authorizationUrl": None, "sessionUri": None}

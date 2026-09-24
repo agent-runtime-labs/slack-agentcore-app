@@ -123,6 +123,10 @@ module "oauth_callback_fn" {
     PUBLIC_BASE_URL          = local.public_base_url
     CIMD_TOKEN_TABLE         = aws_dynamodb_table.cimd_tokens.name
     CIMD_CONNECTION_TTL_DAYS = var.cimd_connection_ttl_days
+    # A connect started from the App Home tab has no channel/thread to post an ephemeral
+    # confirmation into, so app_home.publish_app_home() re-invokes the agent runtime to
+    # republish the tab instead -- see oauth_callback.py's _notify().
+    AGENT_RUNTIME_ARN = module.agent_runtime.agent_runtime_arn
   })
 
   policy_json = jsonencode({
@@ -131,7 +135,7 @@ module "oauth_callback_fn" {
       local.read_slack_secret,
       {
         Effect   = "Allow"
-        Action   = ["dynamodb:GetItem", "dynamodb:DeleteItem"]
+        Action   = ["dynamodb:GetItem", "dynamodb:DeleteItem", "dynamodb:PutItem"]
         Resource = aws_dynamodb_table.pending_auth.arn
       },
       {
@@ -158,6 +162,16 @@ module "oauth_callback_fn" {
         Effect   = "Allow"
         Action   = ["secretsmanager:GetSecretValue"]
         Resource = "arn:aws:secretsmanager:${var.region}:${local.account_id}:secret:bedrock-agentcore-identity!default/oauth2/*"
+      },
+      {
+        # Republishing App Home after a connect: same call agent_worker makes for the
+        # tab's initial load, just from this function.
+        Effect = "Allow"
+        Action = ["bedrock-agentcore:InvokeAgentRuntime", "bedrock-agentcore:InvokeAgentRuntimeForUser"]
+        Resource = [
+          module.agent_runtime.agent_runtime_arn,
+          "${module.agent_runtime.agent_runtime_arn}/runtime-endpoint/*",
+        ]
       },
     ]
   })

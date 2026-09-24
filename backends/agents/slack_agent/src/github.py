@@ -101,6 +101,27 @@ def _run_github_mcp_agent(access_token: str, request: str) -> str:
         return str(github_agent(request)).strip()
 
 
+def check_connection(get_workload_token: Callable[[], str]) -> dict:
+    """Live status check, no MCP/LLM call: does the user have a usable GitHub token?
+
+    Used by the App Home tab (main.py's "connections" mode). Shares fetch_token with
+    the tool above, so the result matches what use_github would see.
+    """
+    try:
+        token = fetch_token(get_workload_token())
+    except Exception:
+        logger.exception("GitHub connection check failed")
+        return {"connected": False, "authorizationUrl": None, "sessionUri": None}
+
+    if token.get("accessToken"):
+        return {"connected": True, "authorizationUrl": None, "sessionUri": None}
+    return {
+        "connected": False,
+        "authorizationUrl": token.get("authorizationUrl"),
+        "sessionUri": token.get("sessionUri"),
+    }
+
+
 def build_github_tool(get_workload_token: Callable[[], str], auth_state: AuthState):
     @tool
     def use_github(request: str) -> str:

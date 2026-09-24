@@ -26,7 +26,7 @@ from functools import lru_cache
 
 import boto3
 
-from slack_app import cimd_client, cimd_tokens
+from slack_app import app_home, cimd_client, cimd_tokens
 from slack_app.apigw import cookie, html_response, json_response, query_param, redirect
 from slack_app.config import cookie_secure
 from slack_app.pending_auth import pending_auth_store
@@ -168,12 +168,17 @@ def _connected(pending) -> dict:
 
 def _notify(pending) -> None:
     try:
-        slack_client().chat_postEphemeral(
-            channel=pending.channel,
-            user=pending.slack_user,
-            thread_ts=pending.thread_ts,
-            text=f"✅ {pending.provider} connected. Ask me your question again.",
-        )
+        if pending.channel:
+            slack_client().chat_postEphemeral(
+                channel=pending.channel,
+                user=pending.slack_user,
+                thread_ts=pending.thread_ts,
+                text=f"✅ {pending.provider} connected. Ask me your question again.",
+            )
+        else:
+            # Started from the App Home tab, which has no channel/thread to post into --
+            # republish it so the status flips to Connected right away.
+            app_home.publish_app_home(pending.team_id, pending.slack_user)
     except Exception:
         logger.exception("Failed to notify Slack user")
 

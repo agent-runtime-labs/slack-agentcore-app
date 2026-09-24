@@ -7,7 +7,7 @@ display_information:
   background_color: "#232f3e"
 features:
   app_home:
-    home_tab_enabled: false
+    home_tab_enabled: true
     messages_tab_enabled: true
     messages_tab_read_only_enabled: false
   bot_user:
@@ -28,6 +28,7 @@ settings:
     bot_events:
       - app_mention
       - message.im
+      - app_home_opened
   org_deploy_enabled: false
   socket_mode_enabled: false
   token_rotation_enabled: false

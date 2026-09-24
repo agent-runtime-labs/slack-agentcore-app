@@ -105,3 +105,29 @@ def test_identity_failure_returns_error_page(pending, monkeypatch):
 
 def test_unknown_path_is_404():
     assert oauth_callback.handler(event("/oauth2/other"), None)["statusCode"] == 404
+
+
+def test_app_home_origin_republishes_home_instead_of_posting_ephemeral(monkeypatch, identity):
+    item = PendingAuth(
+        nonce="n2",
+        runtime_user_id="slack-T999-UALICE",
+        provider="LinkedIn",
+        session_uri="urn:session:home",
+        authorization_url="https://www.linkedin.com/oauth/v2/authorization?x=1",
+        channel="",
+        slack_user="UALICE",
+        thread_ts="",
+        expires_at=int(time.time()) + 600,
+        team_id="T999",
+    )
+    pending_auth_store().put(item)
+
+    calls = []
+    monkeypatch.setattr(oauth_callback.app_home, "publish_app_home", lambda team_id, user: calls.append((team_id, user)))
+
+    result = oauth_callback.handler(
+        event("/oauth2/callback", {"session_id": "urn:session:home"}, ["slack_agent_oauth=n2"]), None
+    )
+
+    assert result["statusCode"] == 200
+    assert calls == [("T999", "UALICE")]

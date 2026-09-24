@@ -96,3 +96,23 @@ def test_ignores_slack_retries(queued):
 def test_ignores_empty_mention(queued):
     slack_events.handler(signed_event(mention_payload(text="<@UBOT>")), None)
     assert queued == []
+
+
+def app_home_payload(**event_overrides):
+    event = {"type": "app_home_opened", "user": "UALICE", "tab": "home", "event_ts": "1726500000.000100"}
+    event.update(event_overrides)
+    return {"type": "event_callback", "team_id": "T999", "event_id": "Ev2", "event": event}
+
+
+def test_app_home_opened_is_queued(queued):
+    result = slack_events.handler(signed_event(app_home_payload()), None)
+    assert result["statusCode"] == 200
+    job, group_id, dedup_id = queued[0]
+    assert job == {"type": "app_home", "team_id": "T999", "user": "UALICE"}
+    assert group_id == "home-T999-UALICE"
+    assert dedup_id == "Ev2"
+
+
+def test_app_home_opened_ignores_non_home_tabs(queued):
+    slack_events.handler(signed_event(app_home_payload(tab="messages")), None)
+    assert queued == []

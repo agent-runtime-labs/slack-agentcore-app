@@ -10,6 +10,12 @@ Response:
     {"message": "...", "authRequired": null | {"authorizationUrl": "...", "sessionUri": "...",
                                                "cimd": {...}}}
 
+A second request shape, {"userId": "...", "mode": "connections"}, skips the LLM and
+prompt entirely and instead returns live connect status for every provider:
+    {"connections": {"providers": [{"key": "...", "displayName": "...", "connected": bool,
+                                     "authorizationUrl": str | null, ...}]}}
+Powers the Slack App Home tab -- see _check_connections below.
+
 Tools come from two OAuth worlds:
     * linkedin.py / github.py  -- AgentCore Identity holds the tokens (client secret in AWS).
     * cimd/                    -- we hold the tokens; the client_id is a URL (CIMD/SEP-991).
@@ -25,10 +31,12 @@ from strands.models.bedrock import BedrockModel
 
 import config
 from auth_state import AuthState
-from cimd import build_cimd_tools, enabled_providers
+from cimd import build_cimd_tools, check_cimd_connections, enabled_providers
 from conversations import ConversationCache
 from github import build_github_tool
+from github import check_connection as check_github_connection
 from linkedin import build_linkedin_tool, workload_token_provider
+from linkedin import check_connection as check_linkedin_connection
 from slack_progress import ProgressReporter
 
 logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO"))
@@ -39,6 +47,11 @@ BASE_SYSTEM_PROMPT = """You are a friendly, concise assistant in Slack. Answer a
 Remember what the user tells you during the conversation and use it when they ask later.
 Only call get_my_linkedin_profile when the user explicitly asks about their LinkedIn profile, and only call
 use_github when the user explicitly asks about their GitHub account, repositories, issues, or pull requests."""
+
+FORMATTING_RULE = """Keep replies tidy, not a report. When you're combining results from more than one tool, write
+one short flowing paragraph or a single flat bullet list -- never a bold heading per source, never nested/indented
+sub-bullets, and no more than a couple of short lines per item. Only bold the specific values that matter (a name, a
+count, a status), not whole headings. If the answer is short, a sentence or two is better than a list at all."""
 
 CONSENT_RULE = """If a tool returns AUTHORIZATION_REQUIRED, ask them to use the private Connect link that was just
 sent to them and ask again. Never make up details for an account that is not connected."""
@@ -57,7 +70,7 @@ def _system_prompt() -> str:
             f"Only call {provider.tool_name} when the user explicitly asks about their "
             f"{provider.display_name} account or data ({provider.summary})."
         )
-    lines += [CONSENT_RULE, WRITE_RELAY_RULE]
+    lines += [FORMATTING_RULE, CONSENT_RULE, WRITE_RELAY_RULE]
     return "\n".join(lines)
 
 
@@ -67,18 +80,40 @@ conversations = ConversationCache(config.MAX_CACHED_CONVERSATIONS)
 SYSTEM_PROMPT = _system_prompt()
 
 
+def _check_connections(user_id: str, get_token) -> dict:
+    """Live connect status for every provider, without spending a chat turn.
+
+    Bypasses the LLM entirely -- each check reuses the same fetch_token/discover code
+    the real tools call, so "connected" here means exactly what it would mean if the
+    user asked the bot. Powers the Slack App Home tab.
+    """
+    providers = [
+        {"key": "linkedin", "displayName": "LinkedIn", **check_linkedin_connection(get_token)},
+        {"key": "github", "displayName": "GitHub", **check_github_connection(get_token)},
+        *check_cimd_connections(user_id),
+    ]
+    return {"providers": providers}
+
+
 @app.entrypoint
 def invoke(payload: dict, context: RequestContext) -> dict:
-    prompt = (payload.get("prompt") or "").strip()
     user_id = payload.get("userId")
-    session_id = context.session_id or payload.get("sessionId")
-    if not prompt or not user_id or not session_id:
-        return {"error": "prompt, userId and sessionId are required", "authRequired": None}
+    if not user_id:
+        return {"error": "userId is required", "authRequired": None}
 
     # In AgentCore Runtime this token is minted for the runtimeUserId the caller
     # passed, so it identifies the Slack user without trusting the payload.
     # Read it here (request thread) rather than inside the tool.
     get_token = workload_token_provider(BedrockAgentCoreContext.get_workload_access_token(), user_id)
+
+    if payload.get("mode") == "connections":
+        return {"connections": _check_connections(user_id, get_token), "message": "", "authRequired": None}
+
+    prompt = (payload.get("prompt") or "").strip()
+    session_id = context.session_id or payload.get("sessionId")
+    if not prompt or not session_id:
+        return {"error": "prompt and sessionId are required", "authRequired": None}
+
     auth_state = AuthState()
     history = conversations.get(session_id)
 
