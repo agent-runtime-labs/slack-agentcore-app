@@ -26,11 +26,12 @@ from functools import lru_cache
 
 import boto3
 
-from slack_app import app_home, cimd_client, cimd_tokens
+from slack_app import cimd_client, cimd_tokens
 from slack_app.apigw import cookie, html_response, json_response, query_param, redirect
 from slack_app.config import cookie_secure
 from slack_app.pending_auth import pending_auth_store
 from slack_app.slack import slack_client
+from slack_app.work_queue import enqueue
 
 logger = logging.getLogger(__name__)
 
@@ -177,8 +178,18 @@ def _notify(pending) -> None:
             )
         else:
             # Started from the App Home tab, which has no channel/thread to post into --
-            # republish it so the status flips to Connected right away.
-            app_home.publish_app_home(pending.team_id, pending.slack_user)
+            # queue the same "app_home" job slack_events.py uses for the tab's initial
+            # load, so agent_worker republishes it and the status flips to Connected.
+            # This callback is public and unauthenticated (bound to the caller only by
+            # the nonce/session checks above), so it deliberately doesn't hold the
+            # InvokeAgentRuntimeForUser permission that republishing needs -- only
+            # agent_worker, reachable exclusively via Slack-signature-verified events,
+            # does.
+            enqueue(
+                {"type": "app_home", "team_id": pending.team_id, "user": pending.slack_user},
+                group_id=f"home-{pending.team_id}-{pending.slack_user}",
+                dedup_id=f"home-connected-{pending.nonce}",
+            )
     except Exception:
         logger.exception("Failed to notify Slack user")
 

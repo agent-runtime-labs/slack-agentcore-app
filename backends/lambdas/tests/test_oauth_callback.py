@@ -107,7 +107,7 @@ def test_unknown_path_is_404():
     assert oauth_callback.handler(event("/oauth2/other"), None)["statusCode"] == 404
 
 
-def test_app_home_origin_republishes_home_instead_of_posting_ephemeral(monkeypatch, identity):
+def test_app_home_origin_queues_a_republish_instead_of_posting_ephemeral(monkeypatch, identity):
     item = PendingAuth(
         nonce="n2",
         runtime_user_id="slack-T999-UALICE",
@@ -122,12 +122,17 @@ def test_app_home_origin_republishes_home_instead_of_posting_ephemeral(monkeypat
     )
     pending_auth_store().put(item)
 
-    calls = []
-    monkeypatch.setattr(oauth_callback.app_home, "publish_app_home", lambda team_id, user: calls.append((team_id, user)))
+    jobs = []
+    monkeypatch.setattr(
+        oauth_callback, "enqueue", lambda job, group_id, dedup_id: jobs.append((job, group_id, dedup_id))
+    )
 
     result = oauth_callback.handler(
         event("/oauth2/callback", {"session_id": "urn:session:home"}, ["slack_agent_oauth=n2"]), None
     )
 
     assert result["statusCode"] == 200
-    assert calls == [("T999", "UALICE")]
+    job, group_id, dedup_id = jobs[0]
+    assert job == {"type": "app_home", "team_id": "T999", "user": "UALICE"}
+    assert group_id == "home-T999-UALICE"
+    assert dedup_id == "home-connected-n2"
