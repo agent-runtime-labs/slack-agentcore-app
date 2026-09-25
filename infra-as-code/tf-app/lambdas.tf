@@ -124,9 +124,11 @@ module "oauth_callback_fn" {
     CIMD_TOKEN_TABLE         = aws_dynamodb_table.cimd_tokens.name
     CIMD_CONNECTION_TTL_DAYS = var.cimd_connection_ttl_days
     # A connect started from the App Home tab has no channel/thread to post an ephemeral
-    # confirmation into, so app_home.publish_app_home() re-invokes the agent runtime to
-    # republish the tab instead -- see oauth_callback.py's _notify().
-    AGENT_RUNTIME_ARN = module.agent_runtime.agent_runtime_arn
+    # confirmation into, so oauth_callback.py's _notify() queues the same "app_home" job
+    # slack_events.py uses for the tab's initial load, instead of publishing directly --
+    # this function is public and unauthenticated, so it deliberately doesn't hold the
+    # bedrock-agentcore invoke permission agent_worker needs to do that.
+    PROCESSING_QUEUE_URL = aws_sqs_queue.processing.url
   })
 
   policy_json = jsonencode({
@@ -164,14 +166,12 @@ module "oauth_callback_fn" {
         Resource = "arn:aws:secretsmanager:${var.region}:${local.account_id}:secret:bedrock-agentcore-identity!default/oauth2/*"
       },
       {
-        # Republishing App Home after a connect: same call agent_worker makes for the
-        # tab's initial load, just from this function.
-        Effect = "Allow"
-        Action = ["bedrock-agentcore:InvokeAgentRuntime", "bedrock-agentcore:InvokeAgentRuntimeForUser"]
-        Resource = [
-          module.agent_runtime.agent_runtime_arn,
-          "${module.agent_runtime.agent_runtime_arn}/runtime-endpoint/*",
-        ]
+        # Queues the "app_home" job that republishes Home after a connect -- see the
+        # PROCESSING_QUEUE_URL comment above for why this queues rather than invokes
+        # the agent runtime directly.
+        Effect   = "Allow"
+        Action   = ["sqs:SendMessage"]
+        Resource = aws_sqs_queue.processing.arn
       },
     ]
   })
