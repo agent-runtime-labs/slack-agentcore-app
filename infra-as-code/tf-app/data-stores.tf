@@ -1,5 +1,5 @@
 ################################################################################
-# Queue, pending-OAuth table and Slack secret
+# Queue, DynamoDB tables and Slack secret
 ################################################################################
 
 resource "aws_sqs_queue" "processing_dlq" {
@@ -34,6 +34,28 @@ resource "aws_dynamodb_table" "pending_auth" {
 
   attribute {
     name = "nonce"
+    type = "S"
+  }
+
+  ttl {
+    attribute_name = "expires_at"
+    enabled        = true
+  }
+
+  server_side_encryption {
+    enabled = true
+  }
+}
+
+# Slack threads the bot has replied in (team:channel:thread_ts), so follow-ups there are
+# answered without an @mention. Items carry their own expiry; see engaged_threads.py.
+resource "aws_dynamodb_table" "engaged_threads" {
+  name         = "${local.name_prefix}-engaged-threads"
+  billing_mode = "PAY_PER_REQUEST"
+  hash_key     = "thread_key"
+
+  attribute {
+    name = "thread_key"
     type = "S"
   }
 

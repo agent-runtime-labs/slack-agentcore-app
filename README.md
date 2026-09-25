@@ -69,7 +69,7 @@ Then click **send-test-mention** in Tilt and follow the connect link that appear
 ## Common commands
 
 ```bash
-make test          # 72 unit tests (lambdas + agent)
+make test          # 116 unit tests (lambdas + agent)
 make tf-validate   # terraform fmt check + validate
 make deploy        # ENV=dev by default
 make outputs       # Slack Request URL, runtime ARN, ...

@@ -42,7 +42,7 @@ flowchart LR
     GHMCP["GitHub Remote MCP Server<br/>api.githubcopilot.com/mcp/"]
     CIMD["CIMD Remote MCP Servers<br/>mcp.linear.app, mcp.notion.com<br/>OAuth + MCP on the same host"]
 
-    U -- "@mention / DM" --> APIGW
+    U -- "@mention / DM /<br/>channel message" --> APIGW
     APIGW -- "POST /slack/events" --> EV
     EV --> Q --> WK
     WK -- "InvokeAgentRuntime<br/>runtimeUserId=slack-T-U" --> RT
@@ -70,8 +70,8 @@ flowchart LR
 
 | Component | Source | Purpose |
 |---|---|---|
-| `slack-events` Lambda | [backends/lambdas/src/slack_app/handlers/slack_events.py](../backends/lambdas/src/slack_app/handlers/slack_events.py) | Checks the Slack signature, ignores bot messages and retries, posts "🤔 Thinking…", and queues the job. |
-| `agent-worker` Lambda | [handlers/agent_worker.py](../backends/lambdas/src/slack_app/handlers/agent_worker.py) | Invokes the Runtime **as the Slack user**, then either posts the answer or sends a private "Connect LinkedIn"/"Connect GitHub" link, depending on which provider the tool needed. |
+| `slack-events` Lambda | [backends/lambdas/src/slack_app/handlers/slack_events.py](../backends/lambdas/src/slack_app/handlers/slack_events.py) | Checks the Slack signature, ignores bot messages and retries, and routes the message: @mentions and DMs get "🤔 Thinking…" and are queued; other channel messages, including follow-ups in threads the bot is in, are queued for triage without any visible reaction. See [slack-setup.md](slack-setup.md#replying-without-an-mention). |
+| `agent-worker` Lambda | [handlers/agent_worker.py](../backends/lambdas/src/slack_app/handlers/agent_worker.py) | For triage jobs, first asks Nova Lite ([triage.py](../backends/lambdas/src/slack_app/triage.py)) whether the message is meant for the bot and drops it if not. Then invokes the Runtime **as the Slack user**, then either posts the answer or sends a private "Connect LinkedIn"/"Connect GitHub" link, depending on which provider the tool needed. |
 | `oauth-callback` Lambda | [handlers/oauth_callback.py](../backends/lambdas/src/slack_app/handlers/oauth_callback.py) | Binds the OAuth session to the user's browser and completes consent. Provider-agnostic — reads `pending.provider` for the confirmation page/message, and `pending.cimd` to decide whether AWS finishes the exchange (AgentCore Identity) or we do (CIMD). Also serves the CIMD client metadata document. |
 | Agent — LinkedIn tool | [linkedin.py](../backends/agents/slack_agent/src/linkedin.py) | `get_my_linkedin_profile`: fetches the vaulted token, calls LinkedIn's REST API directly, returns JSON. Runs inline in the main `Agent` (Nova Micro). |
 | Agent — GitHub tool | [github.py](../backends/agents/slack_agent/src/github.py) | `use_github(request)`: fetches the vaulted token, opens an MCP session to GitHub's remote MCP server with it as the Bearer credential, and hands the server's full tool catalog to a **nested** Strands agent (Claude Haiku, `GITHUB_MODEL_ID`) that chains whatever calls the request needs (e.g. `get_me` → `search_repositories`). |

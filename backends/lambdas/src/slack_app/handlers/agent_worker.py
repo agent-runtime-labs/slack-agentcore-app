@@ -1,5 +1,9 @@
 """SQS consumer — calls the agent as the Slack user and writes the answer back to Slack.
 
+Triage jobs (channel messages that didn't @mention the bot, see slack_events.py) first
+ask the model whether the message is meant for the bot. Only if it is do they get the
+reaction and placeholder that other jobs got up front; otherwise the bot stays quiet.
+
 invoke_agent is a single blocking call, so we pass the placeholder's channel/ts along and
 let the agent post its own live per-tool progress directly to Slack (see slack_progress.py
 in the agent). As a fallback for turns where the agent never gets to post anything (no tool
@@ -21,10 +25,12 @@ from slack_app.slack import (
     REACTION_DONE,
     REACTION_ERROR,
     REACTION_WORKING,
+    acknowledge,
     add_reaction,
     remove_reaction,
     slack_client,
 )
+from slack_app.triage import wants_reply
 
 logger = logging.getLogger(__name__)
 
@@ -40,6 +46,15 @@ def handler(event: dict, context) -> dict:
 
 def process(job: dict) -> None:
     slack = slack_client()
+    triage = job.get("triage")
+    if triage:
+        if not wants_reply(triage["text"], triage["bot_in_thread"]):
+            logger.info("Not replying to message %s: not meant for the bot", job["user_message_ts"])
+            return
+        logger.info("Replying to message %s: triage says it's meant for the bot", job["user_message_ts"])
+        placeholder_ts = acknowledge(slack, job["team_id"], job["channel"], job["user_message_ts"], job["thread_ts"])
+        job = {**job, "placeholder_ts": placeholder_ts}
+
     user_id = runtime_user_id(job["team_id"], job["user"])
     session_id = runtime_session_id(job["team_id"], job["channel"], job["thread_ts"], job["user"])
 
