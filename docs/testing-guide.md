@@ -63,12 +63,13 @@ curl -s localhost:8081/healthz              # {"status":"ok"}
 make test
 ```
 
-**Expected:** `28 passed` (lambdas) and `11 passed` (agent). Tilt also runs these as the **unit-tests** resource whenever you change the source.
+**Expected:** `66 passed` (lambdas) and `50 passed` (agent). Tilt also runs these as the **unit-tests** resource whenever you change the source.
 
 | File | What it checks |
 |---|---|
-| [test_slack_events.py](../backends/lambdas/tests/test_slack_events.py) | Bad or stale signatures, the URL challenge, mention and DM handling, ignoring bots, edits and retries |
-| [test_agent_worker.py](../backends/lambdas/tests/test_agent_worker.py) | Reply replaces the placeholder; a connect link goes only to the requester; agent errors are reported to the user |
+| [test_slack_events.py](../backends/lambdas/tests/test_slack_events.py) | Bad or stale signatures, the URL challenge, mention and DM handling, ignoring bots, edits and retries; routing channel messages without a mention to triage (with thread context), no double reply to an @mention |
+| [test_triage.py](../backends/lambdas/tests/test_triage.py) | The "is this for the bot?" model call: answer parsing, staying quiet on errors, how mentions appear in the prompt |
+| [test_agent_worker.py](../backends/lambdas/tests/test_agent_worker.py) | Reply replaces the placeholder; a connect link goes only to the requester; agent errors are reported to the user; triage "no" stays silent, "yes" acknowledges then replies |
 | [test_oauth_callback.py](../backends/lambdas/tests/test_oauth_callback.py) | Cookie + redirect; mismatched sessions, missing cookies and replays are rejected |
 | [test_identity.py](../backends/lambdas/tests/test_identity.py) | User and session IDs are per user and per workspace |
 | [test_linkedin_tool.py](../backends/agents/slack_agent/tests/test_linkedin_tool.py) | Token found, consent needed, revoked token, local workload token fallback |
@@ -542,6 +543,7 @@ curl -s "$(./tf-wrapper.sh dev output -raw cimd_client_id)" | jq
 | `--channel` | `CLOCALDEV1` | Slack channel in the logs |
 | `--thread-ts` | new timestamp | Continues an existing conversation |
 | `--dm` | off | Sends a `message.im` event instead of `app_mention` |
+| `--channel-message` | off | Sends a plain `message.channels` event with no mention, which goes to triage (needs AWS credentials for Bedrock, or the bot stays quiet). Add `--thread-ts` of a thread the bot answered to test follow-ups |
 | `--url` | `http://localhost:8081/slack/events` | Only localhost is accepted |
 
 If something doesn't match what's described here, see [troubleshooting.md](troubleshooting.md).

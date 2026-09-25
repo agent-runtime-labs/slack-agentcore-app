@@ -37,7 +37,8 @@ module "slack_events_fn" {
   timeout     = 10
 
   environment_variables = merge(local.lambda_common_env, {
-    PROCESSING_QUEUE_URL = aws_sqs_queue.processing.url
+    PROCESSING_QUEUE_URL  = aws_sqs_queue.processing.url
+    ENGAGED_THREADS_TABLE = aws_dynamodb_table.engaged_threads.name
   })
 
   policy_json = jsonencode({
@@ -48,6 +49,11 @@ module "slack_events_fn" {
         Effect   = "Allow"
         Action   = ["sqs:SendMessage"]
         Resource = aws_sqs_queue.processing.arn
+      },
+      {
+        Effect   = "Allow"
+        Action   = ["dynamodb:GetItem", "dynamodb:PutItem"]
+        Resource = aws_dynamodb_table.engaged_threads.arn
       },
     ]
   })
@@ -65,9 +71,12 @@ module "agent_worker_fn" {
   memory_size = 512
 
   environment_variables = merge(local.lambda_common_env, {
-    AGENT_RUNTIME_ARN  = module.agent_runtime.agent_runtime_arn
-    PENDING_AUTH_TABLE = aws_dynamodb_table.pending_auth.name
-    PUBLIC_BASE_URL    = local.public_base_url
+    AGENT_RUNTIME_ARN     = module.agent_runtime.agent_runtime_arn
+    PENDING_AUTH_TABLE    = aws_dynamodb_table.pending_auth.name
+    ENGAGED_THREADS_TABLE = aws_dynamodb_table.engaged_threads.name
+    PUBLIC_BASE_URL       = local.public_base_url
+    # Decides whether a channel message without an @mention is meant for the bot.
+    TRIAGE_MODEL_ID = var.triage_model_id
   })
 
   policy_json = jsonencode({
@@ -92,7 +101,13 @@ module "agent_worker_fn" {
       {
         Effect   = "Allow"
         Action   = ["dynamodb:PutItem"]
-        Resource = aws_dynamodb_table.pending_auth.arn
+        Resource = [aws_dynamodb_table.pending_auth.arn, aws_dynamodb_table.engaged_threads.arn]
+      },
+      {
+        # Triage only: one short Converse call per channel message that didn't @mention the bot.
+        Effect   = "Allow"
+        Action   = ["bedrock:InvokeModel"]
+        Resource = local.triage_model_resource_arns
       },
     ]
   })

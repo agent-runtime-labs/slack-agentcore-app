@@ -2,8 +2,10 @@ import time
 
 import pytest
 
+from slack_app.engaged_threads import is_engaged
 from slack_app.handlers import agent_worker
 from slack_app.pending_auth import pending_auth_store
+from slack_app.slack import PLACEHOLDER_TEXT
 
 JOB = {
     "team_id": "T999",
@@ -22,6 +24,10 @@ class RecordingSlack:
 
     def chat_update(self, **kwargs):
         self.calls.append(("update", kwargs))
+
+    def chat_postMessage(self, **kwargs):  # noqa: N802
+        self.calls.append(("post", kwargs))
+        return {"ts": "1.3"}
 
     def chat_postEphemeral(self, **kwargs):  # noqa: N802
         self.calls.append(("ephemeral", kwargs))
@@ -187,3 +193,39 @@ def test_a_failed_reaction_call_does_not_break_the_reply(monkeypatch, slack):
 
     agent_worker.process(JOB)  # must not raise
     assert _messages(slack.calls) == [("update", {"channel": "C123", "ts": "1.2", "text": "hi"})]
+
+
+TRIAGE_JOB = {
+    **{k: v for k, v in JOB.items() if k != "placeholder_ts"},
+    "text": "how do I connect Notion?",
+    "triage": {"text": "how do I connect Notion?", "bot_in_thread": False},
+}
+
+
+def test_triage_no_stays_quiet(monkeypatch, slack):
+    monkeypatch.setattr(agent_worker, "wants_reply", lambda text, bot_in_thread: False)
+    monkeypatch.setattr(agent_worker, "invoke_agent", lambda *a: pytest.fail("agent must not be called"))
+
+    agent_worker.process(TRIAGE_JOB)
+
+    assert slack.calls == []
+    assert not is_engaged("T999", "C123", "1.1")
+
+
+def test_triage_yes_acknowledges_then_replies(monkeypatch, slack):
+    seen = {}
+    monkeypatch.setattr(agent_worker, "wants_reply", lambda text, bot_in_thread: seen.update(triage=text) or True)
+
+    def fake_invoke(prompt, user_id, session_id, channel, message_ts):
+        seen.update(prompt=prompt, message_ts=message_ts)
+        return {"message": "Ask me to connect Notion.", "authRequired": None}
+
+    monkeypatch.setattr(agent_worker, "invoke_agent", fake_invoke)
+    agent_worker.process(TRIAGE_JOB)
+
+    assert seen == {"triage": "how do I connect Notion?", "prompt": "how do I connect Notion?", "message_ts": "1.3"}
+    assert [kind for kind, _ in slack.calls] == ["reaction_add", "post", "reaction_remove", "reaction_add", "update"]
+    assert slack.calls[1][1] == {"channel": "C123", "thread_ts": "1.1", "text": PLACEHOLDER_TEXT}
+    assert slack.calls[-1][1] == {"channel": "C123", "ts": "1.3", "text": "Ask me to connect Notion."}
+    # The bot is now part of the thread, so follow-ups there need no mention.
+    assert is_engaged("T999", "C123", "1.1")

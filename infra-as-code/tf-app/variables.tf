@@ -30,6 +30,12 @@ variable "github_model_id" {
   default     = "us.anthropic.claude-haiku-4-5-20251001-v1:0"
 }
 
+variable "triage_model_id" {
+  type        = string
+  description = "Bedrock model the agent-worker Lambda asks whether a channel message without an @mention is meant for the bot. Nova Micro can't reliably tell a follow-up addressed to a person from one addressed to the bot; Nova Lite can."
+  default     = "us.amazon.nova-lite-v1:0"
+}
+
 variable "linkedin_provider_name" {
   type        = string
   description = "AgentCore Identity OAuth2 credential provider (created by scripts/identity-setup.sh)"

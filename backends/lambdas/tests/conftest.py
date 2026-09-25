@@ -20,14 +20,22 @@ def local_env(monkeypatch):
     monkeypatch.setenv("PUBLIC_BASE_URL", "http://localhost:8081")
     monkeypatch.setenv("COOKIE_SECURE", "false")
     monkeypatch.setenv("AWS_DEFAULT_REGION", "us-east-1")
-    for name in ("PROCESSING_QUEUE_URL", "PENDING_AUTH_TABLE", "SLACK_SECRET_ARN", "AGENT_LOCAL_URL"):
+    for name in (
+        "PROCESSING_QUEUE_URL",
+        "PENDING_AUTH_TABLE",
+        "ENGAGED_THREADS_TABLE",
+        "SLACK_SECRET_ARN",
+        "AGENT_LOCAL_URL",
+    ):
         monkeypatch.delenv(name, raising=False)
 
-    from slack_app import config, pending_auth, slack
+    from slack_app import config, engaged_threads, pending_auth, slack
 
     config.slack_credentials.cache_clear()
     slack.slack_client.cache_clear()
+    slack._auth_test_user_id.cache_clear()
     pending_auth.pending_auth_store.cache_clear()
+    engaged_threads.engaged_thread_store.cache_clear()
     yield
 
 
@@ -50,4 +58,15 @@ def mention_payload(text="<@UBOT> what's my LinkedIn name?", **event_overrides):
         "team": "T999",
     }
     event.update(event_overrides)
-    return {"type": "event_callback", "team_id": "T999", "event_id": "Ev1", "event": event}
+    return {
+        "type": "event_callback",
+        "team_id": "T999",
+        "event_id": "Ev1",
+        "event": event,
+        "authorizations": [{"team_id": "T999", "user_id": "UBOT", "is_bot": True}],
+    }
+
+
+def channel_message_payload(text="does anyone know how to connect Notion?", **event_overrides):
+    """A plain channel message with no @mention of the bot (Slack's message.channels event)."""
+    return mention_payload(text=text, **{"type": "message", "channel_type": "channel", **event_overrides})

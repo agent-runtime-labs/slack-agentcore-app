@@ -1,6 +1,7 @@
 """Send a correctly signed, fake Slack `app_mention` event to the local server.
 
     python scripts/send_test_event.py --text "What is my LinkedIn name?"
+    python scripts/send_test_event.py --channel-message --thread-ts <ts> --text "And my GitHub?"
 
 Uses SLACK_SIGNING_SECRET from the environment (Tilt's default is
 "local-dev-signing-secret"). With SLACK_DRY_RUN=true the replies, including the
@@ -25,7 +26,13 @@ def main() -> None:
     parser.add_argument("--team", default="TLOCALDEV1")
     parser.add_argument("--channel", default="CLOCALDEV1")
     parser.add_argument("--thread-ts", default=None, help="Reuse to continue a conversation")
-    parser.add_argument("--dm", action="store_true", help="Send as a direct message instead of a mention")
+    kind = parser.add_mutually_exclusive_group()
+    kind.add_argument("--dm", action="store_true", help="Send as a direct message instead of a mention")
+    kind.add_argument(
+        "--channel-message",
+        action="store_true",
+        help="Send as a plain channel message without an @mention (answered in threads the bot is in, else triaged)",
+    )
     parser.add_argument("--url", default="http://localhost:8081/slack/events")
     args = parser.parse_args()
 
@@ -33,16 +40,17 @@ def main() -> None:
         raise SystemExit("This helper only targets the local server.")
 
     ts = f"{time.time():.6f}"
+    plain = args.dm or args.channel_message
     event = {
-        "type": "message" if args.dm else "app_mention",
+        "type": "message" if plain else "app_mention",
         "user": args.user,
-        "text": args.text if args.dm else f"<@UBOTLOCAL> {args.text}",
+        "text": args.text if plain else f"<@UBOTLOCAL> {args.text}",
         "channel": args.channel,
         "ts": ts,
         "team": args.team,
     }
-    if args.dm:
-        event["channel_type"] = "im"
+    if plain:
+        event["channel_type"] = "im" if args.dm else "channel"
     if args.thread_ts:
         event["thread_ts"] = args.thread_ts
 
@@ -51,6 +59,7 @@ def main() -> None:
         "team_id": args.team,
         "event_id": f"Ev{uuid.uuid4().hex[:10]}",
         "event": event,
+        "authorizations": [{"team_id": args.team, "user_id": "UBOTLOCAL", "is_bot": True}],
     })
     secret = os.getenv("SLACK_SIGNING_SECRET", "local-dev-signing-secret")
     stamp = str(int(time.time()))

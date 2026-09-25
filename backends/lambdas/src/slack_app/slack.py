@@ -9,10 +9,13 @@ from slack_sdk import WebClient
 from slack_sdk.signature import SignatureVerifier
 
 from slack_app.config import slack_credentials, slack_dry_run
+from slack_app.engaged_threads import mark_engaged
 
 logger = logging.getLogger(__name__)
 
-_MENTION = re.compile(r"<@[A-Z0-9]+>")
+_MENTION = re.compile(r"<@([A-Z0-9]+)(?:\|[^>]*)?>")
+
+PLACEHOLDER_TEXT = "🤔 Thinking…"
 
 # Reaction names (Slack emoji shortcodes, no colons) for the lifecycle of a request:
 # added the moment we receive it, then swapped for one of the outcome reactions once
@@ -47,6 +50,10 @@ class DryRunSlackClient:
     def reactions_remove(self, **kwargs) -> dict:
         return self._log("reactions.remove", **kwargs)
 
+    def auth_test(self, **kwargs) -> dict:
+        self._log("auth.test", **kwargs)
+        return {"ok": True, "user_id": "UBOTLOCAL"}
+
 
 @lru_cache(maxsize=1)
 def slack_client() -> WebClient | DryRunSlackClient:
@@ -79,13 +86,56 @@ def verify_request(body: str, timestamp: str | None, signature: str | None) -> b
     return verifier.is_valid(body=body, timestamp=timestamp, signature=signature)
 
 
+def _from_a_person(event: dict) -> bool:
+    """Excludes bots (including this one), edits, deletions, joins and other subtypes."""
+    return not (event.get("bot_id") or event.get("subtype") or not event.get("user"))
+
+
 def should_handle(event: dict) -> bool:
-    """Only real user messages: @mentions in channels and direct messages."""
-    if event.get("bot_id") or event.get("subtype") or not event.get("user"):
+    """Messages that are always for the bot: @mentions in channels and direct messages."""
+    if not _from_a_person(event):
         return False
     if event.get("type") == "app_mention":
         return True
     return event.get("type") == "message" and event.get("channel_type") == "im"
+
+
+def is_channel_message(event: dict) -> bool:
+    """Any message a person posts in a public or private channel the bot is in."""
+    return (
+        _from_a_person(event)
+        and event.get("type") == "message"
+        and event.get("channel_type") in ("channel", "group")
+    )
+
+
+def mentioned_users(text: str) -> set[str]:
+    return set(_MENTION.findall(text or ""))
+
+
+def bot_user_id(payload: dict) -> str:
+    """The bot's own Slack user ID, from the event's authorizations or, failing that, auth.test."""
+    for authorization in payload.get("authorizations") or []:
+        if authorization.get("is_bot") and authorization.get("user_id"):
+            return authorization["user_id"]
+    return _auth_test_user_id()
+
+
+@lru_cache(maxsize=1)
+def _auth_test_user_id() -> str:
+    return slack_client().auth_test()["user_id"]
+
+
+def acknowledge(client, team_id: str, channel: str, message_ts: str, thread_ts: str) -> str:
+    """Show the user we're on it and return the placeholder's ts for the worker to update.
+
+    Reacts to their message, posts the placeholder in the thread, and remembers the thread
+    so that follow-ups in it no longer need an @mention.
+    """
+    add_reaction(client, channel, message_ts, REACTION_WORKING)
+    placeholder = client.chat_postMessage(channel=channel, thread_ts=thread_ts, text=PLACEHOLDER_TEXT)
+    mark_engaged(team_id, channel, thread_ts)
+    return placeholder["ts"]
 
 
 def clean_text(text: str) -> str:
