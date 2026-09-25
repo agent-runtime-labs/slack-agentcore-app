@@ -7,7 +7,6 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 import linkedin  # noqa: E402
-from conversations import ConversationCache  # noqa: E402
 
 
 @pytest.fixture
@@ -96,14 +95,3 @@ def test_workload_token_local_fallback(monkeypatch):
     monkeypatch.setattr(linkedin.config, "LOCAL_WORKLOAD_NAME", "local-wl")
     monkeypatch.setattr(linkedin, "_identity", lambda: FakeIdentity())
     assert linkedin.workload_token_provider(None, "slack-T1-U1")() == "local-wl:slack-T1-U1"
-
-
-def test_conversation_cache_is_bounded_and_isolated():
-    cache = ConversationCache(max_items=2)
-    cache.put("a", [{"role": "user"}])
-    cache.put("b", [])
-    cache.put("c", [])
-    assert cache.get("a") == []
-    got = cache.get("c")
-    got.append("mutated")
-    assert cache.get("c") == []

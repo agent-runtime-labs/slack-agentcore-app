@@ -100,7 +100,7 @@ Full step-by-step expectations for each flow are in [testing-guide.md § 7](test
 ## Updating
 
 - **Code:** edit, then `./tf-wrapper.sh dev apply`. The changed image is rebuilt and the functions and runtime are updated.
-- **Model:** set `model_id` in the tfvars (for example `us.amazon.nova-lite-v1:0`), then apply. IAM follows automatically.
+- **Model:** set `model_id` (chat) or `triage_model_id` in the tfvars (for example `us.amazon.nova-pro-v1:0`), then apply. IAM follows automatically. Cheaper models are more likely to misjudge when to answer, ask or stay quiet.
 - **CI-built images:** pass `-var agent_image_tag=<tag> -var lambda_image_tag=<tag>` to skip local builds.
 
 ## Other environments
@@ -119,7 +119,7 @@ The ECR repositories are force-deleted, and the `cimd-tokens` table goes with th
 
 | Item | Driver |
 |---|---|
-| Nova Micro | $0.035 per 1M input tokens / $0.14 per 1M output tokens: a few cents for hundreds of messages. |
+| Claude Haiku 4.5 | $1 per 1M input tokens / $5 per 1M output tokens. Every channel message the bot can see gets a triage call, which includes the thread so far (up to 31 messages), and each answer includes it too. In busy channels with long threads, triage is the larger share. |
 | AgentCore Runtime | Billed per second of CPU and memory while a session is active. Sessions idle out after 5 min (`idle_session_timeout_seconds = 300`) and are hard-capped at 1 hour (`max_session_lifetime_seconds = 3600`). |
 | Lambda, API Gateway, SQS, DynamoDB | Pay-per-request; effectively free-tier at sandbox volume. |
 | ECR | Storage for up to 10 images per repository. |

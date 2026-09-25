@@ -88,16 +88,33 @@ The bot joins in the way a colleague would, rather than only when it's @mentione
 | Message | What happens |
 |---|---|
 | `@AgentCore Assistant …` or a DM | Always answered. |
-| Any other channel message | Triaged: a short Nova Lite call decides whether it's a question for the bot (or one it can clearly answer) or conversation between people. Only a "yes" gets 👀 and a reply. |
+| Any other channel message | Triaged: a short Claude Haiku call reads the thread so far and picks one of four actions (below). Only a reply gets 👀 and a message. |
 
-Triage is told when a message is a reply in a thread the bot has answered in (within the last 7 days). Follow-ups there, like "and my GitHub?" or "why?", get a reply without a mention. Follow-ups addressed to someone else, like "@Bob can you take this?" or "Philip, can you check this?", are left to the people.
+| Triage says | When | What the bot does |
+|---|---|---|
+| **Reply** | A question or request for the bot, a follow-up in its part of the thread ("the second one", "why?"), the answer to a question it asked, or a channel question it can clearly answer | Answers, like an @mention |
+| **React** | A thank-you or acknowledgement to the bot ("thanks bot!") | Adds 👍 and posts nothing |
+| **Correct** | Someone misstates something the bot itself posted in this thread ("so Alice has 2 PRs?" after it listed 3) | One short correction, pointing back to its message. No tools, so it never looks anything up to prove a point, and it doesn't argue or repeat itself. |
+| **Ignore** | People talking to each other ("Bob, can you review #15?" and Bob's answer), chit-chat, announcements, questions only people can answer | Nothing |
 
-Triage runs in the `agent-worker` Lambda, never in the 3-second `slack-events` handler, and any error means the bot stays quiet. It uses Nova Lite (`triage_model_id`) rather than the chat model: Nova Micro kept answering follow-ups like "Philip do you have access to it". Set `ASSISTANT_NAME` on the worker if you rename the bot, so triage knows which name is its own. Threads the bot is in are remembered in the `engaged-threads` DynamoDB table (in memory locally).
+Follow-ups addressed to someone else, like "@Bob can you take this?" or "Philip, can you check this?", are left to the people, even in a thread the bot has been answering in.
 
-Because it reads every message in channels it's been invited to, the bot sends each of them to Bedrock for triage. Messages aren't stored or logged. Only invite it to channels where that's acceptable, and use `@mention` or DMs for everything else.
+Triage runs in the `agent-worker` Lambda, never in the 3-second `slack-events` handler, and any error means the bot stays quiet. It uses Claude Haiku 4.5 (`triage_model_id`): Nova Micro kept answering follow-ups like "Philip do you have access to it", and Nova Lite only had to say yes or no, without the thread. Set `ASSISTANT_NAME` on the worker if you rename the bot, so triage knows which name is its own. Threads the bot is in are also remembered in the `engaged-threads` DynamoDB table (in memory locally).
+
+### What the bot knows about the thread
+
+Before triage and before answering, the worker reads the thread from Slack (`conversations.replies`, which the `*:history` scopes already allow). It takes the first message plus the latest 30, each cut to 2,000 characters. That thread is the bot's only memory, so:
+
+- Everyone in a thread shares the same context. If Alice asks for her PRs and Bob asks "which one is the oldest?", the bot knows what "which one" refers to.
+- An @mention after a discussion between people sees that discussion ("@bot make a ticket for this").
+- A follow-up an hour later still has the context, because nothing needed to stay in memory.
+- It asks one short question only when a wrong guess would matter, such as an unclear reference or creating something. It never asks for anything the thread already answers.
+- What the bot looked up but didn't post (for example the full tool output) isn't remembered. Only what's in the thread is.
+
+Because it reads every message in channels it's been invited to, the bot sends each of them, with the thread it's in, to Bedrock for triage. Messages aren't stored or logged. Only invite it to channels where that's acceptable, and use `@mention` or DMs for everything else.
 
 ## Behaviour notes
 
 - **Profile data is posted where the question was asked.** Anyone in a public channel who can read the thread will see the answer. For private data, DM the bot.
-- **Conversation history is per thread and per person.** Two people in the same thread have separate histories with the agent.
+- **The thread is the conversation history.** Everyone in a thread shares it, and it's read again from Slack for every message. Other people's messages are context only: the bot acts on the requester's accounts only because of what the requester asked.
 - **Slack retries** (the `X-Slack-Retry-Num` header) are acknowledged but ignored, because the first delivery was already queued.

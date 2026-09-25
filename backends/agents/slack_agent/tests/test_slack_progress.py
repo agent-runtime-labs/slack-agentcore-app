@@ -110,7 +110,7 @@ def test_no_post_without_a_bot_token(posted, monkeypatch):
 
 
 def test_distinct_tools_in_quick_succession_all_post(token, posted):
-    # Nova Micro can call several tools in one turn well under a second apart -- every
+    # The model can call several tools in one turn well under a second apart -- every
     # distinct tool must still get its own update (this was previously dropped by a
     # time-based throttle).
     reporter = slack_progress.ProgressReporter("C1", "100.1")

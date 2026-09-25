@@ -109,7 +109,7 @@ registry; prefer read-only scopes unless the write flow is wanted.
 ## Data exposure to keep in mind
 
 - LinkedIn, GitHub, Linear or Notion data is posted **in the thread where it was requested**. In a public channel, others can read it. DM the bot for private data.
-- Conversation history lives in memory inside the user's own Runtime session and disappears when the session ends.
+- There is no stored conversation history. For every message, the worker reads the Slack thread and sends it to the agent, so anything posted in a thread (including the bot's answers from someone's connected accounts) becomes context for later messages in that thread, whoever sends them. Tool calls still only ever use the requester's own accounts, and the thread goes into the prompt as delimited data rather than as instructions.
 - Local development uses real AWS credentials, copied into a Kubernetes Secret in your local cluster.
 
 ## When to add AgentCore Gateway

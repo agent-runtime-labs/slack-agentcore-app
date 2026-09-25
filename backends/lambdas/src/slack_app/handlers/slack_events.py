@@ -6,8 +6,8 @@ and queues the real work for agent_worker:
   * reply   -- @mentions and DMs. Reacts and posts a placeholder now.
   * triage  -- any other message a person posts in a channel the bot is in, including
                follow-ups in threads the bot is part of. Queued silently; agent_worker
-               asks the model whether it is meant for the bot and only then reacts and
-               replies.
+               reads the thread and asks the model whether to reply, react, correct
+               or stay quiet.
 """
 
 import json
@@ -21,6 +21,7 @@ from slack_app.slack import (
     clean_text,
     is_channel_message,
     mentioned_users,
+    record_incoming,
     should_handle,
     slack_client,
     verify_request,
@@ -67,6 +68,7 @@ def handler(event: dict, context) -> dict:
     channel = slack_event["channel"]
     user_message_ts = slack_event["ts"]
     thread_ts = slack_event.get("thread_ts") or user_message_ts
+    record_incoming(slack_event, thread_ts)
 
     job = {
         "team_id": team_id,

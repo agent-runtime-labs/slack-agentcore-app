@@ -1,6 +1,6 @@
 # Slack × Amazon Bedrock AgentCore
 
-A Slack assistant running on **Amazon Bedrock AgentCore Runtime** (Strands Agents + **Amazon Nova Micro**) that acts on **each user's own accounts**, never a shared one:
+A Slack assistant running on **Amazon Bedrock AgentCore Runtime** (Strands Agents + **Claude Haiku 4.5**) that reads the Slack thread before it answers, so it joins a conversation the way a colleague would, and acts on **each user's own accounts**, never a shared one:
 
 - **LinkedIn and GitHub** through **AgentCore Identity** — AWS is the OAuth client and owns the token vault.
 - **Linear and Notion** through **CIMD** ([Client ID Metadata Documents](docs/cimd-providers.md), MCP SEP-991) — no client ID, no client secret, no registration: the app identifies itself to their authorization servers with the URL of a JSON document it publishes. Adding another CIMD server is one entry in a registry.
@@ -8,7 +8,7 @@ A Slack assistant running on **Amazon Bedrock AgentCore Runtime** (Strands Agent
 Based on the AWS blog post [Integrating Amazon Bedrock AgentCore with Slack](https://aws.amazon.com/blogs/machine-learning/integrating-amazon-bedrock-agentcore-with-slack/) and its [sample](https://github.com/aws-samples/sample-Integrating-Amazon-Bedrock-AgentCore-with-Slack). This version uses Terraform, Python Lambdas, Tilt for local development, and per-user outbound OAuth.
 
 ```
-Slack ─► API Gateway ─► λ slack-events ─► SQS FIFO ─► λ agent-worker ─► AgentCore Runtime ─► Nova Micro
+Slack ─► API Gateway ─► λ slack-events ─► SQS FIFO ─► λ agent-worker ─► AgentCore Runtime ─► Claude Haiku
                                                          │  runtimeUserId=slack-<team>-<user>      │
                                                          │                                          ├─► AgentCore Identity ─► LinkedIn
                                                          │                                          ├─► AgentCore Identity ─► GitHub MCP

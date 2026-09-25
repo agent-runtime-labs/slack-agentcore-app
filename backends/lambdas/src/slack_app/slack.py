@@ -2,7 +2,9 @@
 
 import logging
 import re
+import threading
 import time
+from decimal import Decimal
 from functools import lru_cache
 
 from slack_sdk import WebClient
@@ -26,20 +28,51 @@ REACTION_WORKING = "eyes"
 REACTION_DONE = "speech_balloon"
 REACTION_ERROR = "warning"
 REACTION_AUTH_REQUIRED = "lock"
+# A thank-you or "got it" aimed at the bot gets a thumbs up instead of a reply, as a
+# person would do (see triage.REACT).
+REACTION_ACK = "+1"
+
+DRY_RUN_BOT_USER_ID = "UBOTLOCAL"
 
 
 class DryRunSlackClient:
-    """Stands in for WebClient when SLACK_DRY_RUN=true; logs instead of calling Slack."""
+    """Stands in for WebClient when SLACK_DRY_RUN=true; logs instead of calling Slack.
+
+    It also remembers the messages that pass through it (see record_incoming), so that
+    conversations.replies returns a real thread and follow-ups can be tested locally.
+    """
+
+    def __init__(self):
+        self._threads: dict[tuple[str, str], dict[str, dict]] = {}
+        self._lock = threading.Lock()
 
     def _log(self, method: str, **kwargs) -> dict:
         logger.info("[slack dry-run] %s %s", method, kwargs)
         return {"ok": True, "ts": f"{time.time():.6f}"}
 
+    def remember(self, channel: str, thread_ts: str, message: dict) -> None:
+        with self._lock:
+            self._threads.setdefault((channel, thread_ts), {})[message["ts"]] = message
+
     def chat_postMessage(self, **kwargs) -> dict:  # noqa: N802 - mirrors slack_sdk
-        return self._log("chat.postMessage", **kwargs)
+        result = self._log("chat.postMessage", **kwargs)
+        message = {"ts": result["ts"], "user": DRY_RUN_BOT_USER_ID, "text": kwargs.get("text", "")}
+        self.remember(kwargs["channel"], kwargs.get("thread_ts") or result["ts"], message)
+        return result
 
     def chat_update(self, **kwargs) -> dict:
+        with self._lock:
+            for (channel, _), messages in self._threads.items():
+                if channel == kwargs["channel"] and kwargs["ts"] in messages:
+                    messages[kwargs["ts"]]["text"] = kwargs.get("text", "")
         return self._log("chat.update", **kwargs)
+
+    def conversations_replies(self, channel: str, ts: str, latest: str | None = None, **kwargs) -> dict:
+        with self._lock:
+            messages = list(self._threads.get((channel, ts), {}).values())
+        if latest:
+            messages = [message for message in messages if Decimal(message["ts"]) <= Decimal(latest)]
+        return {"ok": True, "messages": sorted(messages, key=lambda message: Decimal(message["ts"]))}
 
     def chat_postEphemeral(self, **kwargs) -> dict:  # noqa: N802
         return self._log("chat.postEphemeral", **kwargs)
@@ -52,7 +85,7 @@ class DryRunSlackClient:
 
     def auth_test(self, **kwargs) -> dict:
         self._log("auth.test", **kwargs)
-        return {"ok": True, "user_id": "UBOTLOCAL"}
+        return {"ok": True, "user_id": DRY_RUN_BOT_USER_ID}
 
 
 @lru_cache(maxsize=1)
@@ -60,6 +93,15 @@ def slack_client() -> WebClient | DryRunSlackClient:
     if slack_dry_run():
         return DryRunSlackClient()
     return WebClient(token=slack_credentials().bot_token)
+
+
+def record_incoming(event: dict, thread_ts: str) -> None:
+    """Dry run only: note a person's message so the fake conversations.replies can return it."""
+    client = slack_client()
+    if isinstance(client, DryRunSlackClient):
+        client.remember(
+            event["channel"], thread_ts, {"ts": event["ts"], "user": event.get("user"), "text": event.get("text", "")}
+        )
 
 
 def add_reaction(client, channel: str, timestamp: str, name: str) -> None:

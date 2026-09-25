@@ -34,7 +34,7 @@ k8s_object('ConfigMap', 'app-config', {
     'LOG_LEVEL': os.getenv('LOG_LEVEL', 'INFO'),
     'AWS_REGION': AWS_REGION,
     'AWS_DEFAULT_REGION': AWS_REGION,
-    'MODEL_ID': os.getenv('MODEL_ID', 'us.amazon.nova-micro-v1:0'),
+    'MODEL_ID': os.getenv('MODEL_ID', 'us.anthropic.claude-haiku-4-5-20251001-v1:0'),
     'LINKEDIN_PROVIDER_NAME': os.getenv('LINKEDIN_PROVIDER_NAME', 'slack-agent-linkedin'),
     'GITHUB_PROVIDER_NAME': os.getenv('GITHUB_PROVIDER_NAME', 'slack-agent-github'),
     'LOCAL_WORKLOAD_NAME': os.getenv('LOCAL_WORKLOAD_NAME', 'slack-agent-local'),

@@ -1,6 +1,6 @@
 # Architecture
 
-A Slack bot backed by an agent on **Amazon Bedrock AgentCore Runtime** (Strands Agents + Amazon Nova Micro). The agent reaches **each Slack user's own LinkedIn and GitHub accounts** through **AgentCore Identity** (OAuth2 authorization code grant) — two independent credential providers, same consent pattern for both. What happens *after* consent differs:
+A Slack bot backed by an agent on **Amazon Bedrock AgentCore Runtime** (Strands Agents + Claude Haiku 4.5). The agent reads the Slack thread on every request, which is its only conversation history. It reaches **each Slack user's own LinkedIn and GitHub accounts** through **AgentCore Identity** (OAuth2 authorization code grant) — two independent credential providers, same consent pattern for both. What happens *after* consent differs:
 
 - **LinkedIn** — the agent calls LinkedIn's REST API (`GET /v2/userinfo`) directly with the vaulted token.
 - **GitHub** — the agent hands the vaulted token to **GitHub's own public remote MCP server** (`api.githubcopilot.com/mcp/`) and runs a small nested Strands agent (**Claude Haiku 4.5**) against its tool catalog, so it can act on issues, pull requests, repos, and org membership, not just read a profile. See [github-setup.md](github-setup.md).
@@ -32,7 +32,7 @@ flowchart LR
             ID["Identity<br/>workload identity +<br/>token vault"]
         end
 
-        BR["Bedrock<br/>Nova Micro<br/>(chat loop)"]
+        BR["Bedrock<br/>Claude Haiku 4.5<br/>(chat loop + triage)"]
         BR2["Bedrock<br/>Claude Haiku 4.5<br/>(use_github tool only)"]
         ECR[("ECR<br/>images")]
     end
@@ -71,9 +71,9 @@ flowchart LR
 | Component | Source | Purpose |
 |---|---|---|
 | `slack-events` Lambda | [backends/lambdas/src/slack_app/handlers/slack_events.py](../backends/lambdas/src/slack_app/handlers/slack_events.py) | Checks the Slack signature, ignores bot messages and retries, and routes the message: @mentions and DMs get "🤔 Thinking…" and are queued; other channel messages, including follow-ups in threads the bot is in, are queued for triage without any visible reaction. See [slack-setup.md](slack-setup.md#replying-without-an-mention). |
-| `agent-worker` Lambda | [handlers/agent_worker.py](../backends/lambdas/src/slack_app/handlers/agent_worker.py) | For triage jobs, first asks Nova Lite ([triage.py](../backends/lambdas/src/slack_app/triage.py)) whether the message is meant for the bot and drops it if not. Then invokes the Runtime **as the Slack user**, then either posts the answer or sends a private "Connect LinkedIn"/"Connect GitHub" link, depending on which provider the tool needed. |
+| `agent-worker` Lambda | [handlers/agent_worker.py](../backends/lambdas/src/slack_app/handlers/agent_worker.py) | Reads the Slack thread ([thread_history.py](../backends/lambdas/src/slack_app/thread_history.py)). For triage jobs, it then asks Claude Haiku ([triage.py](../backends/lambdas/src/slack_app/triage.py)) to reply, react with 👍, post a correction or ignore the message. To reply, it invokes the Runtime **as the Slack user** with the thread attached, then either posts the answer or sends a private "Connect LinkedIn"/"Connect GitHub" link, depending on which provider the tool needed. |
 | `oauth-callback` Lambda | [handlers/oauth_callback.py](../backends/lambdas/src/slack_app/handlers/oauth_callback.py) | Binds the OAuth session to the user's browser and completes consent. Provider-agnostic — reads `pending.provider` for the confirmation page/message, and `pending.cimd` to decide whether AWS finishes the exchange (AgentCore Identity) or we do (CIMD). Also serves the CIMD client metadata document. |
-| Agent — LinkedIn tool | [linkedin.py](../backends/agents/slack_agent/src/linkedin.py) | `get_my_linkedin_profile`: fetches the vaulted token, calls LinkedIn's REST API directly, returns JSON. Runs inline in the main `Agent` (Nova Micro). |
+| Agent — LinkedIn tool | [linkedin.py](../backends/agents/slack_agent/src/linkedin.py) | `get_my_linkedin_profile`: fetches the vaulted token, calls LinkedIn's REST API directly, returns JSON. Runs inline in the main `Agent`. |
 | Agent — GitHub tool | [github.py](../backends/agents/slack_agent/src/github.py) | `use_github(request)`: fetches the vaulted token, opens an MCP session to GitHub's remote MCP server with it as the Bearer credential, and hands the server's full tool catalog to a **nested** Strands agent (Claude Haiku, `GITHUB_MODEL_ID`) that chains whatever calls the request needs (e.g. `get_me` → `search_repositories`). |
 | Agent — CIMD providers | [cimd/](../backends/agents/slack_agent/src/cimd/) | One `use_<key>` tool per entry in [`providers.py`](../backends/agents/slack_agent/src/cimd/providers.py), each wrapping a nested agent like `use_github` does. The package also owns discovery (RFC 9728 → RFC 8414), the PKCE authorization request, token refresh, and the DynamoDB token store. Adding a provider touches only the registry. |
 | CIMD client document | [cimd_client.py](../backends/lambdas/src/slack_app/cimd_client.py) | Serves `/oauth2/client-metadata.json` — the app's OAuth `client_id` — and exchanges the authorization code for tokens. No client secret exists anywhere in this path. |
@@ -92,7 +92,7 @@ sequenceDiagram
     participant Q as SQS FIFO
     participant W as λ agent-worker
     participant R as AgentCore Runtime
-    participant M as Nova Micro
+    participant M as Claude Haiku
 
     A->>S: @bot what's the weather like for a walk?
     S->>E: POST /slack/events (signed)
@@ -101,7 +101,8 @@ sequenceDiagram
     E->>Q: job {team, channel, user, thread_ts, text}
     E-->>S: 200 OK (within 3s)
     Q->>W: job
-    W->>R: InvokeAgentRuntime(runtimeUserId=slack-T1-UALICE,<br/>runtimeSessionId=sha256(team|channel|thread|user))
+    W->>S: conversations.replies (the thread so far)
+    W->>R: InvokeAgentRuntime(runtimeUserId=slack-T1-UALICE,<br/>runtimeSessionId=sha256(team|channel|thread|user),<br/>payload: prompt + thread)
     R->>M: Converse
     M-->>R: answer
     R-->>W: {"message": "...", "authRequired": null}
@@ -153,7 +154,7 @@ sequenceDiagram
     autonumber
     actor A as Alice (Slack)
     participant W as λ agent-worker
-    participant R as Runtime<br/>(Nova Micro, use_github tool)
+    participant R as Runtime<br/>(Claude Haiku, use_github tool)
     participant I as AgentCore Identity
     participant G as nested GitHub agent<br/>(Claude Haiku)
     participant MCP as GitHub Remote MCP Server
@@ -174,7 +175,7 @@ sequenceDiagram
     W->>A: chat.update (replace placeholder)
 ```
 
-`use_github` stays a single, lazily-invoked tool from the outer agent's point of view — the outer Nova Micro agent never sees GitHub's dozens of MCP tool schemas, only the one `use_github(request)` tool and its text result. The nested Claude Haiku agent sees the full MCP catalog and decides which of its tools to chain; it is created fresh per call and torn down when the tool returns, so nothing about it is held between Slack messages.
+`use_github` stays a single, lazily-invoked tool from the outer agent's point of view — the outer agent never sees GitHub's dozens of MCP tool schemas, only the one `use_github(request)` tool and its text result. The nested Claude Haiku agent sees the full MCP catalog and decides which of its tools to chain; it is created fresh per call and torn down when the tool returns, so nothing about it is held between Slack messages.
 
 ## Request flow: first Linear question (CIMD consent)
 
@@ -228,6 +229,6 @@ What changes locally, and why:
 - **A nested agent, not a top-level tool list, for GitHub.** The remote MCP server exposes dozens of tools with verbose schemas. Loading them all into the main agent's tool list would cost a token-vault round trip and a schema dump on *every* Slack message, GitHub-related or not. Instead the main agent sees one lazy tool, `use_github(request)`, and only pays that cost — and only spins up the nested agent — when a user actually asks a GitHub question.
 - **CIMD instead of AgentCore Identity for Linear and Notion.** Not a preference — a constraint. AgentCore's custom OAuth2 credential providers authenticate with `CLIENT_SECRET_BASIC`/`POST`, `AWS_IAM_ID_TOKEN_JWT` or `PRIVATE_KEY_JWT`; the CIMD draft forbids shared secrets, and these servers advertise only `none` (public client + PKCE), so none of the four fits. The alternative was deprecated Dynamic Client Registration. The cost of going CIMD is owning the token vault; the benefit is that adding the next such server needs no registration, no secret and no infrastructure change. See [cimd-providers.md](cimd-providers.md).
 - **One generic CIMD implementation, not one integration per vendor.** Discovery, PKCE, refresh, the token store and the tool wrapper are provider-agnostic; everything vendor-specific lives in a single registry file. Linear and Notion differ only by URL, scopes and a few sentences of prompt guidance.
-- **No AgentCore Memory.** Each Runtime session is a dedicated microVM that lives until it idles out (`idle_session_timeout_seconds = 300`, 5 minutes) or hits its hard cap (`max_session_lifetime_seconds = 3600`, 1 hour), whichever comes first — see [agent-runtime.tf](../infra-as-code/tf-app/agent-runtime.tf). An in-process cache keyed by session ID gives multi-turn memory inside a thread. Switch to AgentCore Memory if history must outlive the session.
+- **No AgentCore Memory.** Each Runtime session is a dedicated microVM that lives until it idles out (`idle_session_timeout_seconds = 300`, 5 minutes) or hits its hard cap (`max_session_lifetime_seconds = 3600`, 1 hour), whichever comes first — see [agent-runtime.tf](../infra-as-code/tf-app/agent-runtime.tf). Nothing is remembered between requests: the agent-worker reads the Slack thread (`conversations.replies`, first message plus the latest 30) and sends it with every request, so a follow-up after the session has idled out, or from a different person in the thread, has the same context. The thread goes into the prompt as delimited data, so text other people wrote can inform an answer but can't ask for a tool call on the requester's accounts. See [thread_prompt.py](../backends/agents/slack_agent/src/thread_prompt.py).
 - **One Lambda image, three handlers.** A single build is shared, and `image_config.command` selects the handler. The same code runs locally.
-- **Two Bedrock models, chosen per job.** **Nova Micro** (`us.amazon.nova-micro-v1:0`, `MODEL_ID`) drives the main chat loop — the lowest-cost model that supports tool use, fine for short, single-tool-call replies. **Claude Haiku 4.5** (`us.anthropic.claude-haiku-4-5-20251001-v1:0`, `GITHUB_MODEL_ID`) drives the nested GitHub agent only — chaining calls through GitHub's large tool catalog (e.g. `get_me` → `search_repositories`) needs more capable tool-use than Nova Micro reliably gave; it was also hitting `MaxTokensReachedException` on that path at Nova Micro's 1024-token budget, so the GitHub agent gets its own model *and* its own larger budget (4096). The IAM policy allow-lists both models' inference-profile and foundation-model ARNs — see [locals.tf](../infra-as-code/tf-app/locals.tf).
+- **Claude Haiku 4.5 throughout, configured per job.** `MODEL_ID` (the chat loop), `TRIAGE_MODEL_ID` (the worker's reply/react/correct/ignore decision), `GITHUB_MODEL_ID` and `CIMD_MODEL_ID` (the nested agents) all default to `us.anthropic.claude-haiku-4-5-20251001-v1:0`. Nova Micro, the lowest-cost model with tool use, used to drive the chat loop. It couldn't reliably weigh a whole thread when deciding whether to ask, answer or stay brief, and it hit `MaxTokensReachedException` chaining GitHub's large tool catalogue. The nested agents also get a larger token budget (4096) than the chat loop (1024). Each can still be set separately. The IAM policies allow-list every configured model's inference-profile and foundation-model ARNs — see [locals.tf](../infra-as-code/tf-app/locals.tf).
