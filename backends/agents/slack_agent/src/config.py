@@ -4,8 +4,9 @@ import os
 
 AWS_REGION = os.getenv("AWS_REGION", "us-east-1")
 
-# Amazon Nova Micro: the lowest-cost Bedrock text model with tool use.
-MODEL_ID = os.getenv("MODEL_ID", "us.amazon.nova-micro-v1:0")
+# Claude Haiku 4.5: reading a whole Slack thread and judging when to ask, answer or stay
+# brief needs more than Nova Micro (the lowest-cost model with tool use) reliably gave.
+MODEL_ID = os.getenv("MODEL_ID", "us.anthropic.claude-haiku-4-5-20251001-v1:0")
 
 # Claude Haiku 4.5: used only for the GitHub MCP sub-agent, which chains multiple tool calls
 # through GitHub's large tool catalog -- Nova Micro was hitting MaxTokensReachedException on it.
@@ -24,8 +25,6 @@ OAUTH2_RETURN_URL = os.getenv("OAUTH2_RETURN_URL", "")
 # Local development only: there is no Runtime to mint workload access tokens, so the
 # agent asks for one itself using this workload identity.
 LOCAL_WORKLOAD_NAME = os.getenv("LOCAL_WORKLOAD_NAME", "")
-
-MAX_CACHED_CONVERSATIONS = int(os.getenv("MAX_CACHED_CONVERSATIONS", "200"))
 
 # --- CIMD remote MCP servers (see cimd/providers.py and docs/cimd-providers.md) ------
 

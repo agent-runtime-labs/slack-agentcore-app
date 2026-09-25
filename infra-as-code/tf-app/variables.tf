@@ -20,8 +20,8 @@ variable "default_tags" {
 
 variable "model_id" {
   type        = string
-  description = "Bedrock model or inference profile ID. Nova Micro is the lowest-cost option."
-  default     = "us.amazon.nova-micro-v1:0"
+  description = "Bedrock model or inference profile ID for the chat agent. It reads the whole Slack thread and judges when to ask, answer or keep it short, which Nova Micro (the lowest-cost option) didn't do reliably."
+  default     = "us.anthropic.claude-haiku-4-5-20251001-v1:0"
 }
 
 variable "github_model_id" {
@@ -32,8 +32,8 @@ variable "github_model_id" {
 
 variable "triage_model_id" {
   type        = string
-  description = "Bedrock model the agent-worker Lambda asks whether a channel message without an @mention is meant for the bot. Nova Micro can't reliably tell a follow-up addressed to a person from one addressed to the bot; Nova Lite can."
-  default     = "us.amazon.nova-lite-v1:0"
+  description = "Bedrock model the agent-worker Lambda asks what to do with a channel message without an @mention: reply, react, correct or ignore, given the thread so far."
+  default     = "us.anthropic.claude-haiku-4-5-20251001-v1:0"
 }
 
 variable "linkedin_provider_name" {

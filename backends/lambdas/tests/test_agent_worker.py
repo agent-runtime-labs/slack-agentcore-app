@@ -2,10 +2,12 @@ import time
 
 import pytest
 
+from slack_app import triage
+from slack_app.agent_client import MODE_CORRECT
 from slack_app.engaged_threads import is_engaged
 from slack_app.handlers import agent_worker
 from slack_app.pending_auth import pending_auth_store
-from slack_app.slack import PLACEHOLDER_TEXT
+from slack_app.slack import PLACEHOLDER_TEXT, REACTION_ACK
 
 JOB = {
     "team_id": "T999",
@@ -21,6 +23,10 @@ JOB = {
 class RecordingSlack:
     def __init__(self):
         self.calls = []
+        self.thread = []  # what conversations.replies returns
+
+    def conversations_replies(self, **kwargs):
+        return {"messages": self.thread}
 
     def chat_update(self, **kwargs):
         self.calls.append(("update", kwargs))
@@ -54,7 +60,7 @@ def slack(monkeypatch):
 def test_answer_replaces_placeholder(monkeypatch, slack):
     seen = {}
 
-    def fake_invoke(prompt, user_id, session_id, channel, message_ts):
+    def fake_invoke(prompt, user_id, session_id, channel, message_ts, **kwargs):
         seen.update(prompt=prompt, user_id=user_id, session_id=session_id, channel=channel, message_ts=message_ts)
         return {"message": "Your name is Alice.", "authRequired": None}
 
@@ -72,7 +78,7 @@ def test_auth_required_sends_private_link(monkeypatch, slack):
     monkeypatch.setattr(
         agent_worker,
         "invoke_agent",
-        lambda *a: {
+        lambda *a, **k: {
             "message": "x",
             "authRequired": {"provider": "LinkedIn", "authorizationUrl": "https://li/auth", "sessionUri": "urn:s1"},
         },
@@ -99,7 +105,7 @@ def test_auth_required_sends_private_link(monkeypatch, slack):
 def test_slow_agent_call_gets_interim_update(monkeypatch, slack):
     monkeypatch.setattr(agent_worker, "INTERIM_DELAY_SECONDS", 0.05)
 
-    def slow_invoke(prompt, user_id, session_id, channel, message_ts):
+    def slow_invoke(prompt, user_id, session_id, channel, message_ts, **kwargs):
         time.sleep(0.2)
         return {"message": "Your name is Alice.", "authRequired": None}
 
@@ -114,7 +120,7 @@ def test_slow_agent_call_gets_interim_update(monkeypatch, slack):
 
 def test_fast_agent_call_gets_no_interim_update(monkeypatch, slack):
     monkeypatch.setattr(agent_worker, "INTERIM_DELAY_SECONDS", 5)
-    monkeypatch.setattr(agent_worker, "invoke_agent", lambda *a: {"message": "fast", "authRequired": None})
+    monkeypatch.setattr(agent_worker, "invoke_agent", lambda *a, **k: {"message": "fast", "authRequired": None})
 
     agent_worker.process(JOB)
     time.sleep(0.1)  # long enough for a wrongly-firing timer to show up, well under the 5s delay
@@ -123,7 +129,7 @@ def test_fast_agent_call_gets_no_interim_update(monkeypatch, slack):
 
 
 def test_agent_failure_is_reported_not_raised(monkeypatch, slack):
-    def boom(*a):
+    def boom(*a, **k):
         raise RuntimeError("runtime down")
 
     monkeypatch.setattr(agent_worker, "invoke_agent", boom)
@@ -138,7 +144,7 @@ def _reactions(calls):
 
 
 def test_successful_reply_swaps_hourglass_for_check_mark(monkeypatch, slack):
-    monkeypatch.setattr(agent_worker, "invoke_agent", lambda *a: {"message": "hi", "authRequired": None})
+    monkeypatch.setattr(agent_worker, "invoke_agent", lambda *a, **k: {"message": "hi", "authRequired": None})
     agent_worker.process(JOB)
 
     assert _reactions(slack.calls) == [
@@ -155,7 +161,7 @@ def test_auth_required_swaps_hourglass_for_lock(monkeypatch, slack):
     monkeypatch.setattr(
         agent_worker,
         "invoke_agent",
-        lambda *a: {"message": "x", "authRequired": {"provider": "LinkedIn", "authorizationUrl": "https://li/auth"}},
+        lambda *a, **k: {"message": "x", "authRequired": {"provider": "LinkedIn", "authorizationUrl": "https://li/auth"}},
     )
     agent_worker.process(JOB)
 
@@ -166,7 +172,7 @@ def test_auth_required_swaps_hourglass_for_lock(monkeypatch, slack):
 
 
 def test_failure_swaps_hourglass_for_warning(monkeypatch, slack):
-    monkeypatch.setattr(agent_worker, "invoke_agent", lambda *a: (_ for _ in ()).throw(RuntimeError("boom")))
+    monkeypatch.setattr(agent_worker, "invoke_agent", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("boom")))
     agent_worker.process(JOB)
 
     assert _reactions(slack.calls) == [
@@ -177,7 +183,7 @@ def test_failure_swaps_hourglass_for_warning(monkeypatch, slack):
 
 def test_no_reaction_swap_without_user_message_ts(monkeypatch, slack):
     job = {k: v for k, v in JOB.items() if k != "user_message_ts"}
-    monkeypatch.setattr(agent_worker, "invoke_agent", lambda *a: {"message": "hi", "authRequired": None})
+    monkeypatch.setattr(agent_worker, "invoke_agent", lambda *a, **k: {"message": "hi", "authRequired": None})
     agent_worker.process(job)
 
     assert _reactions(slack.calls) == []
@@ -189,10 +195,58 @@ def test_a_failed_reaction_call_does_not_break_the_reply(monkeypatch, slack):
 
     slack.reactions_add = boom_reaction
     slack.reactions_remove = boom_reaction
-    monkeypatch.setattr(agent_worker, "invoke_agent", lambda *a: {"message": "hi", "authRequired": None})
+    monkeypatch.setattr(agent_worker, "invoke_agent", lambda *a, **k: {"message": "hi", "authRequired": None})
 
     agent_worker.process(JOB)  # must not raise
     assert _messages(slack.calls) == [("update", {"channel": "C123", "ts": "1.2", "text": "hi"})]
+
+
+def _person(ts, text, user="UALICE", name="Alice"):
+    return {"ts": ts, "text": text, "user": user, "user_profile": {"display_name": name}}
+
+
+BOT = "UBOTLOCAL"  # the dry-run bot user ID that bot_user_id() falls back to in tests
+
+
+def test_agent_gets_the_thread_as_its_history(monkeypatch, slack):
+    slack.thread = [
+        _person("0.5", f"<@{BOT}> what are my open PRs?"),
+        {"ts": "0.6", "text": "You have 3 open PRs: #12, #15, #20", "user": BOT},
+        _person("1.0", f"<@{BOT}> which is the oldest?", "UBOB", "Bob"),
+    ]
+    seen = {}
+
+    def fake_invoke(prompt, user_id, session_id, channel, message_ts, **kwargs):
+        seen.update(prompt=prompt, user_id=user_id, **kwargs)
+        return {"message": "#12", "authRequired": None}
+
+    monkeypatch.setattr(agent_worker, "invoke_agent", fake_invoke)
+    agent_worker.process({**JOB, "user": "UBOB"})
+
+    assert seen["prompt"] == "@AgentCore Assistant which is the oldest?"
+    assert seen["requester"] == "Bob"
+    assert seen["user_id"] == "slack-T999-UBOB"
+    assert seen["thread"] == [
+        {"author": "Alice", "text": "@AgentCore Assistant what are my open PRs?", "fromAssistant": False},
+        {"author": "AgentCore Assistant", "text": "You have 3 open PRs: #12, #15, #20", "fromAssistant": True},
+    ]
+    assert "mode" not in seen
+
+
+def test_unreadable_thread_falls_back_to_the_job(monkeypatch, slack):
+    def broken(**kwargs):
+        raise RuntimeError("missing_scope")
+
+    slack.conversations_replies = broken
+    seen = {}
+    monkeypatch.setattr(
+        agent_worker,
+        "invoke_agent",
+        lambda prompt, *a, **k: seen.update(prompt=prompt, **k) or {"message": "hi", "authRequired": None},
+    )
+    agent_worker.process(JOB)
+
+    assert seen == {"prompt": "what's my LinkedIn name?", "thread": [], "requester": "UALICE"}
 
 
 TRIAGE_JOB = {
@@ -202,9 +256,18 @@ TRIAGE_JOB = {
 }
 
 
-def test_triage_no_stays_quiet(monkeypatch, slack):
-    monkeypatch.setattr(agent_worker, "wants_reply", lambda text, bot_in_thread: False)
-    monkeypatch.setattr(agent_worker, "invoke_agent", lambda *a: pytest.fail("agent must not be called"))
+def _decide(action, seen=None):
+    def decide(text, author, history, bot_in_thread):
+        if seen is not None:
+            seen.update(text=text, author=author, history=history, bot_in_thread=bot_in_thread)
+        return action
+
+    return decide
+
+
+def test_triage_ignore_stays_quiet(monkeypatch, slack):
+    monkeypatch.setattr(agent_worker, "decide", _decide(triage.IGNORE))
+    monkeypatch.setattr(agent_worker, "invoke_agent", lambda *a, **k: pytest.fail("agent must not be called"))
 
     agent_worker.process(TRIAGE_JOB)
 
@@ -212,20 +275,84 @@ def test_triage_no_stays_quiet(monkeypatch, slack):
     assert not is_engaged("T999", "C123", "1.1")
 
 
-def test_triage_yes_acknowledges_then_replies(monkeypatch, slack):
+def test_triage_reply_acknowledges_then_replies(monkeypatch, slack):
     seen = {}
-    monkeypatch.setattr(agent_worker, "wants_reply", lambda text, bot_in_thread: seen.update(triage=text) or True)
+    monkeypatch.setattr(agent_worker, "decide", _decide(triage.REPLY, seen))
 
-    def fake_invoke(prompt, user_id, session_id, channel, message_ts):
+    def fake_invoke(prompt, user_id, session_id, channel, message_ts, **kwargs):
         seen.update(prompt=prompt, message_ts=message_ts)
         return {"message": "Ask me to connect Notion.", "authRequired": None}
 
     monkeypatch.setattr(agent_worker, "invoke_agent", fake_invoke)
     agent_worker.process(TRIAGE_JOB)
 
-    assert seen == {"triage": "how do I connect Notion?", "prompt": "how do I connect Notion?", "message_ts": "1.3"}
+    assert seen == {
+        "text": "how do I connect Notion?",
+        "author": "UALICE",
+        "history": [],
+        "bot_in_thread": False,
+        "prompt": "how do I connect Notion?",
+        "message_ts": "1.3",
+    }
     assert [kind for kind, _ in slack.calls] == ["reaction_add", "post", "reaction_remove", "reaction_add", "update"]
     assert slack.calls[1][1] == {"channel": "C123", "thread_ts": "1.1", "text": PLACEHOLDER_TEXT}
     assert slack.calls[-1][1] == {"channel": "C123", "ts": "1.3", "text": "Ask me to connect Notion."}
     # The bot is now part of the thread, so follow-ups there need no mention.
     assert is_engaged("T999", "C123", "1.1")
+
+
+def test_triage_sees_the_thread(monkeypatch, slack):
+    slack.thread = [
+        {"ts": "0.5", "text": "Notion pages: Roadmap, Q3 Goals, Hiring Plan", "user": BOT},
+        _person("1.0", "the second one"),
+    ]
+    seen = {}
+    monkeypatch.setattr(agent_worker, "decide", _decide(triage.IGNORE, seen))
+
+    agent_worker.process(TRIAGE_JOB)
+
+    assert seen["text"] == "the second one"
+    assert seen["author"] == "Alice"
+    assert [message.text for message in seen["history"]] == ["Notion pages: Roadmap, Q3 Goals, Hiring Plan"]
+    # Taken from the thread itself, even though the engaged-threads flag said no.
+    assert seen["bot_in_thread"] is True
+
+
+def test_triage_react_only_adds_a_thumbs_up(monkeypatch, slack):
+    monkeypatch.setattr(agent_worker, "decide", _decide(triage.REACT))
+    monkeypatch.setattr(agent_worker, "invoke_agent", lambda *a, **k: pytest.fail("agent must not be called"))
+
+    agent_worker.process(TRIAGE_JOB)
+
+    assert slack.calls == [("reaction_add", {"channel": "C123", "timestamp": "1.0", "name": REACTION_ACK})]
+
+
+def test_triage_correct_posts_the_correction(monkeypatch, slack):
+    seen = {}
+    monkeypatch.setattr(agent_worker, "decide", _decide(triage.CORRECT))
+
+    def fake_invoke(prompt, user_id, session_id, channel, message_ts, **kwargs):
+        seen.update(message_ts=message_ts, **kwargs)
+        return {"message": "Small correction: it's 3 PRs.", "authRequired": None}
+
+    monkeypatch.setattr(agent_worker, "invoke_agent", fake_invoke)
+    agent_worker.process(TRIAGE_JOB)
+
+    assert seen["mode"] == MODE_CORRECT
+    assert seen["message_ts"] is None  # no placeholder, so nothing for progress updates
+    assert slack.calls == [("post", {"channel": "C123", "thread_ts": "1.1", "text": "Small correction: it's 3 PRs."})]
+
+
+@pytest.mark.parametrize("outcome", [{"message": "", "authRequired": None}, RuntimeError("runtime down")])
+def test_triage_correct_stays_quiet_when_there_is_nothing_to_say(monkeypatch, slack, outcome):
+    def fake_invoke(*a, **k):
+        if isinstance(outcome, Exception):
+            raise outcome
+        return outcome
+
+    monkeypatch.setattr(agent_worker, "decide", _decide(triage.CORRECT))
+    monkeypatch.setattr(agent_worker, "invoke_agent", fake_invoke)
+
+    agent_worker.process(TRIAGE_JOB)
+
+    assert slack.calls == []

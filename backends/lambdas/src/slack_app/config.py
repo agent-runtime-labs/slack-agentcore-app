@@ -28,6 +28,11 @@ def cookie_secure() -> bool:
     return os.getenv("COOKIE_SECURE", "true").lower() == "true"
 
 
+def assistant_name() -> str:
+    """The bot's display name in Slack (docs/slack-app-manifest.yaml), so it can be told apart from people's names."""
+    return os.getenv("ASSISTANT_NAME", "AgentCore Assistant")
+
+
 def public_base_url() -> str:
     """Base URL users' browsers use to reach the OAuth endpoints (API Gateway or localhost)."""
     return os.environ["PUBLIC_BASE_URL"].rstrip("/")

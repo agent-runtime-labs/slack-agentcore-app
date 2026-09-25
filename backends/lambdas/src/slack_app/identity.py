@@ -17,9 +17,11 @@ def runtime_user_id(team_id: str, slack_user_id: str) -> str:
 def runtime_session_id(team_id: str, channel: str, thread_ts: str, slack_user_id: str) -> str:
     """One AgentCore session per (thread, user).
 
-    Including the user keeps conversation history private per person even when
-    several people talk to the bot in the same thread. AgentCore requires at
-    least 33 characters; a SHA-256 hex digest is 64.
+    Including the user gives each person their own Runtime session, and with it
+    their own workload token, even when several people talk to the bot in the
+    same thread. Conversation history isn't kept in the session: it is the Slack
+    thread, which everyone in it shares (thread_history.py). AgentCore requires
+    at least 33 characters; a SHA-256 hex digest is 64.
     """
     key = "|".join([team_id, channel, thread_ts, slack_user_id])
     return hashlib.sha256(key.encode("utf-8")).hexdigest()

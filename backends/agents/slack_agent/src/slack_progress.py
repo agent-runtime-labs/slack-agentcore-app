@@ -59,7 +59,7 @@ def _friendly_tool_text(tool_name: str) -> str:
 class ProgressReporter:
     """A Strands callback_handler that posts one chat.update per distinct tool call.
 
-    Nova Micro can call several tools in the same turn (e.g. GitHub, then LinkedIn, then
+    The model can call several tools in the same turn (e.g. GitHub, then LinkedIn, then
     Linear) in quick succession, well under a second apart -- so updates are deduped by
     tool rather than throttled by a time window, which would silently drop every tool
     after the first.

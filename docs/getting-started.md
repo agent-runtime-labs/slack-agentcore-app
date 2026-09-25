@@ -16,9 +16,9 @@ This guide gets the whole app running on your laptop with **Tilt** on a local Ku
 | direnv | — | Optional: auto-loads `.env` in your shell. |
 
 AWS account requirements:
-- Bedrock model access to **Amazon Nova Micro** in `us-east-1`. Check with:
+- Bedrock model access to **Claude Haiku 4.5** in `us-east-1` (the chat agent, triage and the GitHub/CIMD sub-agents all use it). Check with:
   ```bash
-  aws bedrock-runtime converse --model-id us.amazon.nova-micro-v1:0 \
+  aws bedrock-runtime converse --model-id us.anthropic.claude-haiku-4-5-20251001-v1:0 \
     --messages '[{"role":"user","content":[{"text":"Say OK"}]}]' \
     --query 'output.message.content[0].text' --output text
   ```

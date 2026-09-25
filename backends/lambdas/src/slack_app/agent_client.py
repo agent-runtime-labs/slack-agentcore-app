@@ -11,6 +11,9 @@ from botocore.config import Config
 SESSION_HEADER = "X-Amzn-Bedrock-AgentCore-Runtime-Session-Id"
 TIMEOUT_SECONDS = 120
 
+MODE_REPLY = "reply"
+MODE_CORRECT = "correct"
+
 
 @lru_cache(maxsize=1)
 def _agentcore():
@@ -21,11 +24,24 @@ def _agentcore():
     )
 
 
-def invoke_agent(prompt: str, runtime_user_id: str, session_id: str, channel: str, message_ts: str) -> dict:
+def invoke_agent(
+    prompt: str,
+    runtime_user_id: str,
+    session_id: str,
+    channel: str,
+    message_ts: str | None,
+    *,
+    thread: list[dict] | None = None,
+    requester: str | None = None,
+    mode: str = MODE_REPLY,
+) -> dict:
     """Returns the agent's JSON response: {"message": str, "authRequired": dict | None}.
 
     channel/message_ts identify the Slack placeholder message so the agent can post
     live per-tool progress to it directly (see slack_progress.py in the agent).
+    thread is the conversation so far (ThreadMessage.as_dict()), the agent's only history.
+    In MODE_CORRECT the agent gets no tools and returns an empty message if there is
+    nothing to correct.
     """
     payload = json.dumps(
         {
@@ -34,6 +50,9 @@ def invoke_agent(prompt: str, runtime_user_id: str, session_id: str, channel: st
             "sessionId": session_id,
             "channel": channel,
             "messageTs": message_ts,
+            "thread": thread or [],
+            "requester": requester,
+            "mode": mode,
         }
     )
 

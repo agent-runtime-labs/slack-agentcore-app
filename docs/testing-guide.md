@@ -5,7 +5,7 @@ How to check that each part of the app works, from unit tests up to a real Slack
 | Level | Needs | Covers |
 |---|---|---|
 | [1. Unit tests](#1-unit-tests) | uv | Signature checks, event filtering, OAuth session binding, the LinkedIn, GitHub and CIMD tools |
-| [2. Agent only](#2-agent-only) | Tilt running | Agent container + Bedrock (Nova Micro) |
+| [2. Agent only](#2-agent-only) | Tilt running | Agent container + Bedrock (Claude Haiku) |
 | [3. Chat through the Slack handlers (dry run)](#3-chat-through-the-slack-handlers-dry-run) | Tilt | The full request path, without a Slack workspace |
 | [4. LinkedIn connect flow (dry run)](#4-linkedin-connect-flow-dry-run) | Tilt + LinkedIn app + identity setup | Per-user OAuth, session binding, token isolation |
 | [4b. GitHub connect flow (dry run)](#4b-github-connect-flow-dry-run) | Tilt + GitHub app + identity setup | Same as level 4, second provider |
@@ -95,7 +95,17 @@ curl -s localhost:8080/invocations \
 {"message": "12 times 7 is **84**.", "authRequired": null}
 ```
 
-The `slack-agent` log shows `Invoking agent for session manual-t with 0 prior messages`. Send a second request with the same `SID` and the count goes up to `2`, which shows history is kept.
+The `slack-agent` log shows `Invoking agent for session manual-t with 0 thread messages`. The agent keeps nothing between requests: history comes in the payload's `thread` field, which the worker fills from Slack. To try that directly:
+
+```bash
+curl -s localhost:8080/invocations \
+  -H 'Content-Type: application/json' \
+  -H "X-Amzn-Bedrock-AgentCore-Runtime-Session-Id: $SID" \
+  -d "{\"prompt\":\"Which one is the oldest?\",\"userId\":\"slack-T1-U2\",\"sessionId\":\"$SID\",\"requester\":\"Bob\",
+       \"thread\":[{\"author\":\"AgentCore Assistant\",\"text\":\"Your open PRs: #12 (opened May 1), #15 (June 3)\",\"fromAssistant\":true}]}"
+```
+
+**Expected:** the answer is #12, and the log shows `with 1 thread messages`.
 
 ---
 
@@ -134,15 +144,15 @@ uv run --no-project python scripts/send_test_event.py --thread-ts $T --text "My 
 uv run --no-project python scripts/send_test_event.py --thread-ts $T --text "What is my favourite colour?"
 ```
 
-**Expected:** the last `chat.update` mentions **teal**.
+**Expected:** the last `chat.update` mentions **teal**. In dry-run mode the fake Slack client remembers the messages it has seen, so `conversations.replies` returns the thread as it would in a real workspace.
 
-### 3c. Separate history for each person
+### 3c. One shared history per thread
 
 ```bash
-uv run --no-project python scripts/send_test_event.py --thread-ts $T --user UOTHERPERSON --text "What is my favourite colour?"
+uv run --no-project python scripts/send_test_event.py --thread-ts $T --user UOTHERPERSON --text "What colour did they say they liked?"
 ```
 
-**Expected:** the reply does **not** know the colour. Each person in a thread gets their own session (`sha256(team|channel|thread|user)`).
+**Expected:** the reply says **teal**, even though a different person is asking. The thread is the history, and everyone in it shares that thread. Each person still gets their own Runtime session (`sha256(team|channel|thread|user)`), and with it their own connected accounts.
 
 ### 3d. Direct message
 
