@@ -8,12 +8,16 @@ and queues the real work for agent_worker:
                follow-ups in threads the bot is part of. Queued silently; agent_worker
                reads the thread and asks the model whether to reply, react, correct
                or stay quiet.
+
+A message may be only files, with no text. The job carries their metadata, never their
+contents (see attachments.py).
 """
 
 import json
 import logging
 
 from slack_app.apigw import header, json_response, raw_body
+from slack_app.attachments import from_files
 from slack_app.engaged_threads import is_engaged
 from slack_app.slack import (
     acknowledge,
@@ -57,7 +61,8 @@ def handler(event: dict, context) -> dict:
         return OK
 
     text = clean_text(slack_event.get("text", ""))
-    if not text:
+    files = from_files(slack_event.get("files"))
+    if not text and not files:
         return OK
 
     team_id = payload.get("team_id") or slack_event.get("team", "")
@@ -78,6 +83,8 @@ def handler(event: dict, context) -> dict:
         "text": text,
         "user_message_ts": user_message_ts,
     }
+    if files:
+        job["files"] = [file.as_dict() for file in files]
     if route == REPLY:
         # Near-instant feedback, before the 3-second budget is spent on anything else.
         # agent_worker swaps the reaction for an outcome reaction once it's done.

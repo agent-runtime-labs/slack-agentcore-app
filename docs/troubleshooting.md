@@ -15,6 +15,18 @@
 | `send-test-mention` returns 401 | Signing secret mismatch | The script and the pod both read `SLACK_SIGNING_SECRET`; restart Tilt after changing `.env`. |
 | `docker buildx` fails with `/var/run/docker.sock` | buildx is pointing at the `default` builder | `docker buildx use rancher-desktop` (or your engine's builder). |
 
+## Files and links
+
+| Symptom | Cause | Fix |
+|---|---|---|
+| "this app isn't allowed to read files yet (it needs the files:read scope)" | The app was installed before `files:read` was added | Add the scope, **Reinstall to Workspace**, and store the new bot token ([slack-setup.md](slack-setup.md#files-and-links)). |
+| "I don't have access to Slack files here" | The agent has no bot token. Locally, `SLACK_BOT_TOKEN` is empty in `.env`; in AWS, `SLACK_SECRET_ARN` isn't readable | Set the token and restart Tilt. In AWS, check the runtime role's `ReadSlackBotToken` statement. |
+| Agent log: `Slack sent a web page instead of file …` | Slack returned its sign-in page, usually because of a missing scope or a token from another workspace | As above. The token must belong to the workspace the file is in. |
+| "it isn't stored in Slack, so I can't download it" | The file is an external link (Google Drive and the like) or a Slack Connect copy | Download it and attach the file itself, or paste a public link. |
+| A file-only message gets no reply | Triage decided it wasn't for the bot, or the event subscription is missing | @mention the bot or DM it. Check the `Triage says …` line in the worker log. |
+| "I can only open public web pages" for a site you can reach | The name resolves to a private address from the runtime, or the URL uses a non-default port | This is deliberate (SSRF protection). Share the content as a file instead. |
+| A page's answer says little | The page is rendered by JavaScript, so its HTML has almost no text | Paste the relevant text, or link to a static version (e.g. the raw README). |
+
 ## LinkedIn / GitHub / AgentCore Identity
 
 | Symptom | Cause | Fix |

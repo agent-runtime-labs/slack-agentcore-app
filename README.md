@@ -1,6 +1,6 @@
 # Slack × Amazon Bedrock AgentCore
 
-A Slack assistant running on **Amazon Bedrock AgentCore Runtime** (Strands Agents + **Claude Haiku 4.5**) that reads the Slack thread before it answers, so it joins a conversation the way a colleague would, and acts on **each user's own accounts**, never a shared one:
+A Slack assistant running on **Amazon Bedrock AgentCore Runtime** (Strands Agents + **Claude Haiku 4.5**) that reads the Slack thread before it answers, so it joins a conversation the way a colleague would, reads the files and links people share, and acts on **each user's own accounts**, never a shared one:
 
 - **LinkedIn and GitHub** through **AgentCore Identity** — AWS is the OAuth client and owns the token vault.
 - **Linear and Notion** through **CIMD** ([Client ID Metadata Documents](docs/cimd-providers.md), MCP SEP-991) — no client ID, no client secret, no registration: the app identifies itself to their authorization servers with the URL of a JSON document it publishes. Adding another CIMD server is one entry in a registry.
@@ -58,7 +58,7 @@ Then click **send-test-mention** in Tilt and follow the connect link that appear
 | [Getting started (local setup)](docs/getting-started.md) | Prerequisites, Tilt, testing without Slack |
 | [Testing guide](docs/testing-guide.md) | Step-by-step test flows with expected output (local and AWS) |
 | [Architecture](docs/architecture.md) | Component and sequence diagrams (Mermaid), design choices |
-| [Slack setup](docs/slack-setup.md) | Create the Slack app from a [manifest](docs/slack-app-manifest.yaml) |
+| [Slack setup](docs/slack-setup.md) | Create the Slack app from a [manifest](docs/slack-app-manifest.yaml); [files and links](docs/slack-setup.md#files-and-links) |
 | [LinkedIn & AgentCore Identity setup](docs/linkedin-setup.md) | Developer app, credential provider, redirect URLs |
 | [GitHub & AgentCore Identity setup](docs/github-setup.md) | Same pattern as LinkedIn, using the `GithubOauth2` vendor |
 | [CIMD remote MCP servers](docs/cimd-providers.md) | Linear, Notion and how to add another in one registry entry |
@@ -69,7 +69,7 @@ Then click **send-test-mention** in Tilt and follow the connect link that appear
 ## Common commands
 
 ```bash
-make test          # 116 unit tests (lambdas + agent)
+make test          # 232 unit tests (lambdas + agent)
 make tf-validate   # terraform fmt check + validate
 make deploy        # ENV=dev by default
 make outputs       # Slack Request URL, runtime ARN, ...

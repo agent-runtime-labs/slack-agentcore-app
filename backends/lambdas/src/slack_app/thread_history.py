@@ -5,6 +5,9 @@ message is meant for the bot, and the agent reads it to answer. Nothing is store
 between. Every job reads the thread from Slack again, so a follow-up an hour later, or
 from a different person, has the same context as one sent straight away.
 
+Files people attached stay in the thread as references (attachments.py): the agent
+downloads one only when the question needs it.
+
 Reading is best-effort. If Slack can't be reached, the bot carries on with just the new
 message, as it did before it read threads at all.
 """
@@ -14,6 +17,7 @@ import re
 from dataclasses import dataclass
 from decimal import Decimal
 
+from slack_app.attachments import Attachment, describe, from_files
 from slack_app.config import assistant_name
 from slack_app.slack import PLACEHOLDER_TEXT
 
@@ -40,9 +44,18 @@ class ThreadMessage:
     author: str
     text: str
     from_assistant: bool = False
+    files: tuple[Attachment, ...] = ()
 
     def as_dict(self) -> dict:
-        return {"author": self.author, "text": self.text, "fromAssistant": self.from_assistant}
+        message = {"author": self.author, "text": self.text, "fromAssistant": self.from_assistant}
+        if self.files:
+            message["files"] = [file.as_dict() for file in self.files]
+        return message
+
+    @property
+    def with_files(self) -> str:
+        """The text plus a line naming any files, as triage reads it."""
+        return " ".join(part for part in (self.text, describe(self.files)) if part)
 
 
 @dataclass(frozen=True)
@@ -75,7 +88,7 @@ def read_thread(client, channel: str, thread_ts: str, message_ts: str, bot_user_
         message = _to_message(item, names, bot_user_id)
         if ts == cutoff:
             new = message
-        elif message.text and not (message.from_assistant and message.text == PLACEHOLDER_TEXT):
+        elif (message.text or message.files) and not (message.from_assistant and message.text == PLACEHOLDER_TEXT):
             earlier.append(message)
 
     if len(earlier) > MAX_MESSAGES:
@@ -127,4 +140,4 @@ def _to_message(item: dict, names: dict[str, str], bot_user_id: str | None) -> T
     text = readable(item.get("text", ""), names)
     if len(text) > MAX_CHARS:
         text = text[:MAX_CHARS] + "…"
-    return ThreadMessage(author=author, text=text, from_assistant=from_assistant)
+    return ThreadMessage(author=author, text=text, from_assistant=from_assistant, files=from_files(item.get("files")))

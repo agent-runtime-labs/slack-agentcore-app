@@ -94,10 +94,10 @@ docker_build(
     ],
 )
 
+# slack-credentials goes with the agent, which starts first and reads its bot token too.
 k8s_resource('slack-agent', port_forwards='8080:8080', labels=['backend'],
-             objects=['app-config:configmap', 'aws-credentials:secret'])
-k8s_resource('slack-app', port_forwards='8081:8081', labels=['backend'], resource_deps=['slack-agent'],
-             objects=['slack-credentials:secret'])
+             objects=['app-config:configmap', 'aws-credentials:secret', 'slack-credentials:secret'])
+k8s_resource('slack-app', port_forwards='8081:8081', labels=['backend'], resource_deps=['slack-agent'])
 
 # ---------------------------------------------------------------------------
 # Tests and helpers (buttons in the Tilt UI)
@@ -115,6 +115,15 @@ local_resource(
 local_resource(
     'send-test-mention',
     cmd=UV + 'python scripts/send_test_event.py --text "What is my LinkedIn name?"',
+    auto_init=False,
+    trigger_mode=TRIGGER_MODE_MANUAL,
+    resource_deps=['slack-app'],
+    labels=['test'],
+)
+
+local_resource(
+    'send-test-link',
+    cmd=UV + 'python scripts/send_test_event.py --text "Summarise https://docs.python.org/3/whatsnew/3.13.html in 3 bullets"',
     auto_init=False,
     trigger_mode=TRIGGER_MODE_MANUAL,
     resource_deps=['slack-app'],

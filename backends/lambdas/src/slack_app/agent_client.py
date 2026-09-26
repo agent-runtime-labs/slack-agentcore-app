@@ -33,6 +33,7 @@ def invoke_agent(
     *,
     thread: list[dict] | None = None,
     requester: str | None = None,
+    files: list[dict] | None = None,
     mode: str = MODE_REPLY,
 ) -> dict:
     """Returns the agent's JSON response: {"message": str, "authRequired": dict | None}.
@@ -40,6 +41,8 @@ def invoke_agent(
     channel/message_ts identify the Slack placeholder message so the agent can post
     live per-tool progress to it directly (see slack_progress.py in the agent).
     thread is the conversation so far (ThreadMessage.as_dict()), the agent's only history.
+    files are the new message's attachments (Attachment.as_dict()): references only, the
+    agent downloads them from Slack itself.
     In MODE_CORRECT the agent gets no tools and returns an empty message if there is
     nothing to correct.
     """
@@ -52,6 +55,7 @@ def invoke_agent(
             "messageTs": message_ts,
             "thread": thread or [],
             "requester": requester,
+            "files": files or [],
             "mode": mode,
         }
     )

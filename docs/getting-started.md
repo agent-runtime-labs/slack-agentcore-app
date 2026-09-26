@@ -99,6 +99,8 @@ Edits under `backends/**/src` sync into the pods and restart them automatically.
 
 If you set up `make identity-github`, the same flow works for `--text "What is my GitHub username?"` — same connect-link pattern, `get_my_github_profile` tool, `slack-agent-github` provider.
 
+Files and links go through the same path: click **send-test-link** (the bot summarises a public docs page), or attach a file reference with `--file`. See [testing-guide.md §3e–3f](testing-guide.md#3e-a-public-link) for what to expect, including reading a real Slack file while in dry-run mode.
+
 To call the agent container directly, use [backends/requests.http](../backends/requests.http) (VS Code REST Client) or curl:
 
 ```bash
