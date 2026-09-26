@@ -10,16 +10,12 @@ Nothing here may ever break the real answer: a missing channel/ts, a missing bot
 token, or a network error are all swallowed rather than raised.
 """
 
-import json
 import logging
-import os
-import urllib.error
 import urllib.parse
 import urllib.request
-from functools import lru_cache
 from typing import Any
 
-import boto3
+from slack_api import bot_token
 
 logger = logging.getLogger(__name__)
 
@@ -36,21 +32,20 @@ _TOOL_EMOJI = {
 }
 _DEFAULT_TOOL_EMOJI = "\U0001f50e"  # magnifying glass
 
+# Tools whose name doesn't read well as "Checking <name>…".
+_TOOL_TEXT = {
+    "read_attachment": "\U0001f4ce Reading the attachment…",  # paperclip
+    "fetch_url": "\U0001f310 Opening the link…",  # globe with meridians
+}
+
 # Shown once the model starts producing its final answer, so the placeholder doesn't
 # jump straight from the last "Checking..." line to the finished reply.
 ANSWER_TEXT = "✨ Putting it all together…"
 
 
-@lru_cache(maxsize=1)
-def _bot_token() -> str:
-    secret_arn = os.getenv("SLACK_SECRET_ARN")
-    if secret_arn:
-        raw = boto3.client("secretsmanager").get_secret_value(SecretId=secret_arn)["SecretString"]
-        return json.loads(raw)["bot_token"]
-    return os.getenv("SLACK_BOT_TOKEN", "")
-
-
 def _friendly_tool_text(tool_name: str) -> str:
+    if tool_name in _TOOL_TEXT:
+        return _TOOL_TEXT[tool_name]
     emoji = _TOOL_EMOJI.get(tool_name, _DEFAULT_TOOL_EMOJI)
     label = tool_name.removeprefix("get_my_").removeprefix("use_").replace("_", " ").strip()
     return f"{emoji} Checking {label.title() or 'that'}…"
@@ -81,10 +76,14 @@ class ProgressReporter:
             # lets it post again later if another tool call interrupts it.
             self._post(ANSWER_TEXT)
 
+    def show(self, text: str) -> None:
+        """Post a status line of our own, e.g. "📎 Reading q3-report.pdf…" before the model runs."""
+        self._post(text)
+
     def _post(self, text: str) -> None:
         if not self._channel or not self._ts or text == self._last_text:
             return
-        token = _bot_token()
+        token = bot_token()
         if not token:
             return
         self._last_text = text

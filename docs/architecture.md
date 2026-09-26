@@ -7,6 +7,8 @@ A Slack bot backed by an agent on **Amazon Bedrock AgentCore Runtime** (Strands 
 
 A third group of services — currently **Linear** and **Notion** — is reached without AgentCore Identity at all, because no AgentCore client authentication method fits their authorization servers. They use **CIMD** (Client ID Metadata Documents, MCP SEP-991): the app publishes a JSON document at `/oauth2/client-metadata.json`, that URL *is* its OAuth `client_id`, and the app performs the PKCE flow itself and keeps the resulting per-user tokens in DynamoDB. Same Slack connect-link experience, different owner of the vault. See [cimd-providers.md](cimd-providers.md).
 
+People can also attach files (screenshots, PDFs, Office documents, CSVs, text and code) and paste links. The agent reads them on demand: files are passed around as Slack file IDs and downloaded only by the agent, and public web pages are fetched by a `fetch_url` tool that refuses internal addresses. See [Request flow: a file or a link](#request-flow-a-file-or-a-link).
+
 It follows the pattern from the AWS blog post [Integrating Amazon Bedrock AgentCore with Slack](https://aws.amazon.com/blogs/machine-learning/integrating-amazon-bedrock-agentcore-with-slack/): an API Gateway webhook, a queue, and an async worker. It adds per-user outbound OAuth on top.
 
 ## Components
@@ -41,6 +43,8 @@ flowchart LR
     GH["GitHub<br/>OAuth consent<br/>(github.com)"]
     GHMCP["GitHub Remote MCP Server<br/>api.githubcopilot.com/mcp/"]
     CIMD["CIMD Remote MCP Servers<br/>mcp.linear.app, mcp.notion.com<br/>OAuth + MCP on the same host"]
+    SF["Slack files<br/>files.info + files.slack.com"]
+    WEB["Public web pages<br/>(fetch_url)"]
 
     U -- "@mention / DM /<br/>channel message" --> APIGW
     APIGW -- "POST /slack/events" --> EV
@@ -53,6 +57,8 @@ flowchart LR
     RT -- "use_github:<br/>Bearer token (MCP)" --> GHMCP
     RT -- "use_linear / use_notion:<br/>Bearer token (MCP)" --> CIMD
     RT <-- "read + refresh tokens" --> TOK
+    RT -- "read_attachment / latest files:<br/>bot token" --> SF
+    RT -- "fetch_url:<br/>public addresses only" --> WEB
     WK -- "pending record" --> DDB
     WK -- "reply / private connect link" --> U
     U -. "browser" .-> APIGW
@@ -64,7 +70,7 @@ flowchart LR
     CIMD -. "fetch /oauth2/client-metadata.json" .-> APIGW
     ID <-. "code exchange" .-> LI
     ID <-. "code exchange" .-> GH
-    EV & WK & CB -.-> SM
+    EV & WK & CB & RT -.-> SM
     RT -.-> ECR
 ```
 
@@ -77,6 +83,8 @@ flowchart LR
 | Agent — GitHub tool | [github.py](../backends/agents/slack_agent/src/github.py) | `use_github(request)`: fetches the vaulted token, opens an MCP session to GitHub's remote MCP server with it as the Bearer credential, and hands the server's full tool catalog to a **nested** Strands agent (Claude Haiku, `GITHUB_MODEL_ID`) that chains whatever calls the request needs (e.g. `get_me` → `search_repositories`). |
 | Agent — CIMD providers | [cimd/](../backends/agents/slack_agent/src/cimd/) | One `use_<key>` tool per entry in [`providers.py`](../backends/agents/slack_agent/src/cimd/providers.py), each wrapping a nested agent like `use_github` does. The package also owns discovery (RFC 9728 → RFC 8414), the PKCE authorization request, token refresh, and the DynamoDB token store. Adding a provider touches only the registry. |
 | CIMD client document | [cimd_client.py](../backends/lambdas/src/slack_app/cimd_client.py) | Serves `/oauth2/client-metadata.json` — the app's OAuth `client_id` — and exchanges the authorization code for tokens. No client secret exists anywhere in this path. |
+| Agent — attachments | [attachments.py](../backends/agents/slack_agent/src/attachments.py), [slack_files.py](../backends/agents/slack_agent/src/slack_files.py), [content_blocks.py](../backends/agents/slack_agent/src/content_blocks.py) | Opens the files attached to the new message and sends them to the model with the prompt as Converse `image`/`document` blocks. `read_attachment(file_id)` opens a file from earlier in the thread, but only one the worker listed. Downloads use Slack's own `files.info` URL and send the bot token only to `files.slack.com`. |
+| Agent — links | [web_fetch.py](../backends/agents/slack_agent/src/web_fetch.py) | `fetch_url(url)`: reads a public page or PDF. Checks every hop against private, loopback, link-local and metadata addresses, connects to the address it checked, and hands GitHub, Linear and Notion links to their own tools instead. |
 | Agent — shared state | [auth_state.py](../backends/agents/slack_agent/src/auth_state.py) | `AuthState`: one side-channel both tools write to when consent is needed, read back by `main.py` after the agent loop. |
 | GitHub Remote MCP Server | External (owned by GitHub) | Hosted MCP server exposing GitHub's tool catalog (repos, issues, PRs, code search, orgs, ...) over streamable HTTP, authenticated per-request by whatever Bearer token it's given — here, the Slack user's own vaulted OAuth2 token. No AgentCore Gateway involved. |
 | Infrastructure | [infra-as-code/tf-app](../infra-as-code/tf-app) | Terraform for everything above, including the IAM allow-list for **both** Bedrock models ([locals.tf](../infra-as-code/tf-app/locals.tf)). |
@@ -108,6 +116,47 @@ sequenceDiagram
     R-->>W: {"message": "...", "authRequired": null}
     W->>S: chat.update (replace placeholder)
 ```
+
+## Request flow: a file or a link
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor A as Alice (Slack)
+    participant S as Slack
+    participant E as λ slack-events
+    participant W as λ agent-worker
+    participant R as AgentCore Runtime
+    participant M as Claude Haiku
+    participant P as Public web
+
+    A->>S: @bot why is this failing? 📎 error.png
+    S->>E: app_mention with files[] (id, name, mimetype, size)
+    E->>W: job {…, files: [{id, name, mimetype, size}]} via SQS
+    W->>S: conversations.replies (the thread, with each message's files)
+    W->>R: payload: prompt + thread + files (references only)
+    R->>S: files.info F123 (bot token)
+    S-->>R: url_private_download on files.slack.com
+    R->>S: GET the file (token sent to files.slack.com only)
+    R->>M: Converse [image block, text]
+    opt a file earlier in the thread
+        M->>R: read_attachment(F0…) — only IDs the worker listed
+        R->>S: files.info + download
+    end
+    opt a link in the message
+        M->>R: fetch_url(https://docs.example.com/…)
+        R->>R: resolve + check the address (every redirect too)
+        R->>P: GET (pinned to the checked address, no cookies)
+    end
+    M-->>R: answer
+    R-->>W: {"message": "..."}
+    W->>S: chat.update
+```
+
+- **The Lambdas never touch file contents.** The event, the SQS job (256 KB limit), triage and the agent payload carry only references. Triage sees `[attached: q3.csv (12 KB)]`, which is enough to judge who a message is for.
+- **Files on the new message are opened up front. Earlier files are opened only when needed.** Files further up the thread appear in the prompt as `[attached: architecture-v2.pdf (file F0…)]`, and the model opens one with `read_attachment` when the question needs it. A thread full of screenshots doesn't resend every image on every turn.
+- **What the model receives.** Images (PNG, JPEG, GIF, WebP) are scaled down to 1568 px on the long edge, which is the most Claude uses. PDF, DOCX, XLSX, CSV, HTML, Markdown and text files go as documents. Code, JSON and logs go as plain text. Audio, video, archives and files over the limits aren't downloaded, and the reply says why in one line.
+- **Converse limits** are enforced per invocation ([content_blocks.py](../backends/agents/slack_agent/src/content_blocks.py)): at most 20 images of 3.75 MB each and 5 documents of 4.5 MB each.
 
 ## Request flow: first LinkedIn question (user consent)
 
@@ -230,5 +279,6 @@ What changes locally, and why:
 - **CIMD instead of AgentCore Identity for Linear and Notion.** Not a preference — a constraint. AgentCore's custom OAuth2 credential providers authenticate with `CLIENT_SECRET_BASIC`/`POST`, `AWS_IAM_ID_TOKEN_JWT` or `PRIVATE_KEY_JWT`; the CIMD draft forbids shared secrets, and these servers advertise only `none` (public client + PKCE), so none of the four fits. The alternative was deprecated Dynamic Client Registration. The cost of going CIMD is owning the token vault; the benefit is that adding the next such server needs no registration, no secret and no infrastructure change. See [cimd-providers.md](cimd-providers.md).
 - **One generic CIMD implementation, not one integration per vendor.** Discovery, PKCE, refresh, the token store and the tool wrapper are provider-agnostic; everything vendor-specific lives in a single registry file. Linear and Notion differ only by URL, scopes and a few sentences of prompt guidance.
 - **No AgentCore Memory.** Each Runtime session is a dedicated microVM that lives until it idles out (`idle_session_timeout_seconds = 300`, 5 minutes) or hits its hard cap (`max_session_lifetime_seconds = 3600`, 1 hour), whichever comes first — see [agent-runtime.tf](../infra-as-code/tf-app/agent-runtime.tf). Nothing is remembered between requests: the agent-worker reads the Slack thread (`conversations.replies`, first message plus the latest 30) and sends it with every request, so a follow-up after the session has idled out, or from a different person in the thread, has the same context. The thread goes into the prompt as delimited data, so text other people wrote can inform an answer but can't ask for a tool call on the requester's accounts. See [thread_prompt.py](../backends/agents/slack_agent/src/thread_prompt.py).
+- **References, not bytes, for files.** Downloading files in the Lambdas would spend the 3-second budget, overflow the 256 KB SQS limit, and send images to triage for nothing. The agent downloads with the bot token it already holds for progress updates, keeps the bytes in memory for one invocation only, and can only open file IDs from the thread the worker read. Nothing is stored, as with the thread itself.
 - **One Lambda image, three handlers.** A single build is shared, and `image_config.command` selects the handler. The same code runs locally.
 - **Claude Haiku 4.5 throughout, configured per job.** `MODEL_ID` (the chat loop), `TRIAGE_MODEL_ID` (the worker's reply/react/correct/ignore decision), `GITHUB_MODEL_ID` and `CIMD_MODEL_ID` (the nested agents) all default to `us.anthropic.claude-haiku-4-5-20251001-v1:0`. Nova Micro, the lowest-cost model with tool use, used to drive the chat loop. It couldn't reliably weigh a whole thread when deciding whether to ask, answer or stay brief, and it hit `MaxTokensReachedException` chaining GitHub's large tool catalogue. The nested agents also get a larger token budget (4096) than the chat loop (1024). Each can still be set separately. The IAM policies allow-list every configured model's inference-profile and foundation-model ARNs — see [locals.tf](../infra-as-code/tf-app/locals.tf).

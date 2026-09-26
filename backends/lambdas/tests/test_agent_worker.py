@@ -201,8 +201,11 @@ def test_a_failed_reaction_call_does_not_break_the_reply(monkeypatch, slack):
     assert _messages(slack.calls) == [("update", {"channel": "C123", "ts": "1.2", "text": "hi"})]
 
 
-def _person(ts, text, user="UALICE", name="Alice"):
-    return {"ts": ts, "text": text, "user": user, "user_profile": {"display_name": name}}
+def _person(ts, text, user="UALICE", name="Alice", files=None):
+    message = {"ts": ts, "text": text, "user": user, "user_profile": {"display_name": name}}
+    if files:
+        message["files"] = files
+    return message
 
 
 BOT = "UBOTLOCAL"  # the dry-run bot user ID that bot_user_id() falls back to in tests
@@ -246,7 +249,7 @@ def test_unreadable_thread_falls_back_to_the_job(monkeypatch, slack):
     )
     agent_worker.process(JOB)
 
-    assert seen == {"prompt": "what's my LinkedIn name?", "thread": [], "requester": "UALICE"}
+    assert seen == {"prompt": "what's my LinkedIn name?", "thread": [], "requester": "UALICE", "files": []}
 
 
 TRIAGE_JOB = {
@@ -356,3 +359,62 @@ def test_triage_correct_stays_quiet_when_there_is_nothing_to_say(monkeypatch, sl
     agent_worker.process(TRIAGE_JOB)
 
     assert slack.calls == []
+
+
+SCREENSHOT = {"id": "F1", "name": "error.png", "mimetype": "image/png", "size": 81_920}
+
+
+def test_agent_gets_the_new_messages_files_as_references(monkeypatch, slack):
+    slack.thread = [
+        _person("0.5", "", files=[{**SCREENSHOT, "id": "F0", "name": "old.png"}]),
+        _person("1.0", f"<@{BOT}> why is this failing?", files=[SCREENSHOT]),
+    ]
+    seen = {}
+
+    def fake_invoke(prompt, user_id, session_id, channel, message_ts, **kwargs):
+        seen.update(prompt=prompt, **kwargs)
+        return {"message": "KeyError: 'region'", "authRequired": None}
+
+    monkeypatch.setattr(agent_worker, "invoke_agent", fake_invoke)
+    agent_worker.process(JOB)
+
+    assert seen["files"] == [SCREENSHOT]
+    # Earlier files stay with their own message, for the agent to open only if it needs them.
+    assert seen["thread"][0]["files"][0]["id"] == "F0"
+
+
+def test_file_only_message_falls_back_to_the_jobs_files(monkeypatch, slack):
+    slack.conversations_replies = lambda **kwargs: (_ for _ in ()).throw(RuntimeError("missing_scope"))
+    seen = {}
+    monkeypatch.setattr(
+        agent_worker,
+        "invoke_agent",
+        lambda prompt, *a, **k: seen.update(prompt=prompt, **k) or {"message": "hi", "authRequired": None},
+    )
+    agent_worker.process({**JOB, "text": "", "files": [SCREENSHOT]})
+
+    assert seen["prompt"] == ""
+    assert seen["files"] == [SCREENSHOT]
+
+
+def test_triage_sees_which_files_were_attached(monkeypatch, slack):
+    csv = {"id": "F2", "name": "q3.csv", "mimetype": "text/csv", "size": 12_400}
+    slack.thread = [_person("1.0", "Here's the Q3 export for tomorrow's review", files=[csv])]
+    seen = {}
+    monkeypatch.setattr(agent_worker, "decide", _decide(triage.IGNORE, seen))
+    monkeypatch.setattr(agent_worker, "invoke_agent", lambda *a, **k: pytest.fail("agent must not be called"))
+
+    agent_worker.process(TRIAGE_JOB)
+
+    assert seen["text"] == "Here's the Q3 export for tomorrow's review [attached: q3.csv (12 KB)]"
+    assert slack.calls == []
+
+
+def test_triage_without_the_thread_still_sees_the_jobs_files(monkeypatch, slack):
+    slack.conversations_replies = lambda **kwargs: (_ for _ in ()).throw(RuntimeError("missing_scope"))
+    seen = {}
+    monkeypatch.setattr(agent_worker, "decide", _decide(triage.IGNORE, seen))
+
+    agent_worker.process({**TRIAGE_JOB, "files": [SCREENSHOT]})
+
+    assert seen["text"] == "how do I connect Notion? [attached: error.png (80 KB)]"

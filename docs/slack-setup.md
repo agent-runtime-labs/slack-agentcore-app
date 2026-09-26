@@ -20,6 +20,7 @@ The manifest configures:
 | Bot scopes | `app_mentions:read` | Receive `@bot` mentions in channels. |
 | | `channels:history`, `groups:history` | Read messages in public/private channels the bot is in, so it can reply [without an @mention](#replying-without-an-mention). |
 | | `chat:write` | Post the placeholder, update it, and send ephemeral connect links. |
+| | `files:read` | Download the files people attach, so the bot can read them. See [Files and links](#files-and-links). |
 | | `im:history`, `im:read`, `im:write` | Receive and answer direct messages. |
 | | `reactions:write` | React to the user's message (👀 then 💬/⚠️/🔒) while it's being handled. |
 | Bot events | `app_mention`, `message.im` | @mentions and direct messages: always answered. |
@@ -30,7 +31,7 @@ The manifest configures:
 <summary>Prefer clicking through the UI?</summary>
 
 1. **Create New App → From scratch**, then name it and pick a workspace.
-2. **OAuth & Permissions → Bot Token Scopes**: add the eight scopes above.
+2. **OAuth & Permissions → Bot Token Scopes**: add the nine scopes above.
 3. **App Home**: enable the *Messages Tab*, and tick *Allow users to send Slash commands and messages from the messages tab*.
 4. **Event Subscriptions**: turn it on, set the Request URL, and add the bot events `app_mention`, `message.channels`, `message.groups` and `message.im`.
 </details>
@@ -112,6 +113,21 @@ Before triage and before answering, the worker reads the thread from Slack (`con
 - What the bot looked up but didn't post (for example the full tool output) isn't remembered. Only what's in the thread is.
 
 Because it reads every message in channels it's been invited to, the bot sends each of them, with the thread it's in, to Bedrock for triage. Messages aren't stored or logged. Only invite it to channels where that's acceptable, and use `@mention` or DMs for everything else.
+
+## Files and links
+
+People can attach files and paste links, as they would for a colleague:
+
+- **Screenshots and photos** (PNG, JPEG, GIF, WebP): the bot looks at them. Large photos are scaled down first.
+- **Documents** (PDF, Word, Excel, CSV, HTML, Markdown, text) and **text-like files** (code, JSON, YAML, logs): the bot reads them.
+- **Public links** (docs pages, articles, PDFs): the bot fetches and reads them. It can't open pages that need a sign-in or anything on an internal network.
+- **GitHub, Linear and Notion links** are read through those tools, as you. The first time, that means a private Connect button.
+
+Only files on the message the bot is answering are read up front. For a file posted earlier in the thread, just refer to it ("the PDF Bob shared") and the bot opens it if the question needs it. Audio, video, archives and files over the size limits (about 4 MB for documents, 20 MB for images) get a one-line explanation instead of a reply about their content.
+
+**Upgrading an existing app:** `files:read` is new. Add it under **OAuth & Permissions → Bot Token Scopes**, click **Reinstall to Workspace**, and store the bot token again (`put-slack-secret.sh`, or `.env` locally). Until then, the bot answers files with "this app isn't allowed to read files yet".
+
+Files and pages are read in memory for one answer and never stored. Their contents are treated as information, never as instructions: a document that says "open a GitHub issue" doesn't make the bot do it.
 
 ## Behaviour notes
 

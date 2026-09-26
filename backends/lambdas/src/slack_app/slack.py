@@ -99,9 +99,10 @@ def record_incoming(event: dict, thread_ts: str) -> None:
     """Dry run only: note a person's message so the fake conversations.replies can return it."""
     client = slack_client()
     if isinstance(client, DryRunSlackClient):
-        client.remember(
-            event["channel"], thread_ts, {"ts": event["ts"], "user": event.get("user"), "text": event.get("text", "")}
-        )
+        message = {"ts": event["ts"], "user": event.get("user"), "text": event.get("text", "")}
+        if event.get("files"):
+            message["files"] = event["files"]
+        client.remember(event["channel"], thread_ts, message)
 
 
 def add_reaction(client, channel: str, timestamp: str, name: str) -> None:
@@ -128,9 +129,14 @@ def verify_request(body: str, timestamp: str | None, signature: str | None) -> b
     return verifier.is_valid(body=body, timestamp=timestamp, signature=signature)
 
 
+# A person's message with files attached arrives with the file_share subtype. Every other
+# subtype is an edit, a deletion, a join or the like, which the bot doesn't answer.
+_PERSON_SUBTYPES = {None, "file_share"}
+
+
 def _from_a_person(event: dict) -> bool:
     """Excludes bots (including this one), edits, deletions, joins and other subtypes."""
-    return not (event.get("bot_id") or event.get("subtype") or not event.get("user"))
+    return bool(event.get("user")) and not event.get("bot_id") and event.get("subtype") in _PERSON_SUBTYPES
 
 
 def should_handle(event: dict) -> bool:

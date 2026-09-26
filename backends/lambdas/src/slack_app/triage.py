@@ -40,9 +40,13 @@ _ACTIONS = (REPLY, REACT, CORRECT, IGNORE)
 SYSTEM_PROMPT = """\
 You screen messages in a Slack channel for an AI assistant named "{name}". The \
 assistant is a member of the channel, where people mostly talk to each other. It \
-answers general questions and can look things up in the asker's own LinkedIn, GitHub, \
-Linear and Notion accounts. It should contribute like a helpful colleague, never take \
-over a conversation between people.
+answers general questions, can look things up in the asker's own LinkedIn, GitHub, \
+Linear and Notion accounts, and can read files people attach and public web pages \
+they link to. It should contribute like a helpful colleague, never take over a \
+conversation between people.
+
+Files attached to a message are shown as [attached: name (size)]. A file on its own is \
+not a request: judge the message by who it is for, as with any other message.
 
 You get the earlier messages in the thread, if any, then the new message. Decide what \
 the assistant does with the NEW message. Go through these checks in order and stop at \
@@ -87,6 +91,10 @@ fix one?" -> IGNORE (check 2)
 -> REPLY (check 6)
 - Assistant asked "Which team, Platform or Web?", new message "Platform" -> REPLY \
 (check 6)
+- In the channel: "Here's the Q3 export for tomorrow's review [attached: q3.csv (12 KB)]" \
+-> IGNORE (check 5)
+- In the assistant's thread, right after its answer: "and what about this one? \
+[attached: error.png (80 KB)]" -> REPLY (check 6)
 - In the channel: "lunch anyone?" -> IGNORE (check 7)
 - In the channel: "how do I connect Notion here?" -> REPLY (check 7)
 
@@ -135,7 +143,7 @@ def _transcript(history: list[ThreadMessage]) -> str:
     if not history:
         return ""
     lines = [
-        f"[{_escape(message.author)}{' (the assistant)' if message.from_assistant else ''}] {_escape(message.text)}"
+        f"[{_escape(message.author)}{' (the assistant)' if message.from_assistant else ''}] {_escape(message.with_files)}"
         for message in history
     ]
     return "Earlier messages in the thread, oldest first:\n<thread>\n" + "\n".join(lines) + "\n</thread>\n\n"
