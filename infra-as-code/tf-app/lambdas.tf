@@ -133,6 +133,8 @@ module "oauth_callback_fn" {
   environment_variables = merge(local.lambda_common_env, {
     PENDING_AUTH_TABLE = aws_dynamodb_table.pending_auth.name
     COOKIE_SECURE      = "true"
+    # Once the user connects, the request that needed the account is queued again.
+    PROCESSING_QUEUE_URL = aws_sqs_queue.processing.url
     # The client metadata document must advertise the URL it is served from, so the
     # handler builds both from the public base URL.
     PUBLIC_BASE_URL          = local.public_base_url
@@ -148,6 +150,11 @@ module "oauth_callback_fn" {
         Effect   = "Allow"
         Action   = ["dynamodb:GetItem", "dynamodb:DeleteItem"]
         Resource = aws_dynamodb_table.pending_auth.arn
+      },
+      {
+        Effect   = "Allow"
+        Action   = ["sqs:SendMessage"]
+        Resource = aws_sqs_queue.processing.arn
       },
       {
         # Write-only: this function mints a CIMD connection, the agent runtime reads

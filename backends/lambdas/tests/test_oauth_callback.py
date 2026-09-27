@@ -1,3 +1,4 @@
+import json
 import time
 
 import pytest
@@ -19,6 +20,16 @@ def identity(monkeypatch):
     fake = FakeIdentity()
     monkeypatch.setattr(oauth_callback, "_identity", lambda: fake)
     return fake
+
+
+@pytest.fixture
+def queued(monkeypatch):
+    jobs = []
+    monkeypatch.setattr(oauth_callback, "enqueue", lambda job, group_id, dedup_id: jobs.append((job, group_id, dedup_id)))
+    return jobs
+
+
+JOB = {"team_id": "T999", "channel": "C123", "user": "UALICE", "thread_ts": "1.1", "text": "my open PRs?"}
 
 
 @pytest.fixture
@@ -105,3 +116,49 @@ def test_identity_failure_returns_error_page(pending, monkeypatch):
 
 def test_unknown_path_is_404():
     assert oauth_callback.handler(event("/oauth2/other"), None)["statusCode"] == 404
+
+
+def _ephemerals(monkeypatch):
+    from slack_app import slack
+
+    sent = []
+    client = slack.slack_client()
+    monkeypatch.setattr(client, "chat_postEphemeral", lambda **kwargs: sent.append(kwargs))
+    return sent
+
+
+def test_callback_resumes_the_original_request(pending, identity, queued, monkeypatch):
+    sent = _ephemerals(monkeypatch)
+    pending_auth_store().put(PendingAuth(**{**pending.__dict__, "resume_job": json.dumps(JOB)}))
+
+    result = oauth_callback.handler(
+        event("/oauth2/callback", {"session_id": "urn:session:abc"}, ["slack_agent_oauth=n1"]), None
+    )
+
+    assert result["statusCode"] == 200
+    assert "answering your question" in result["body"]
+    assert queued == [({**JOB, "resumed_after_auth": True}, "C123-1.1", "resume-n1")]
+    assert "Picking your question back up" in sent[0]["text"]
+
+
+def test_callback_without_saved_request_asks_again(pending, identity, queued, monkeypatch):
+    sent = _ephemerals(monkeypatch)
+    result = oauth_callback.handler(
+        event("/oauth2/callback", {"session_id": "urn:session:abc"}, ["slack_agent_oauth=n1"]), None
+    )
+    assert result["statusCode"] == 200
+    assert queued == []
+    assert "Ask me your question again" in sent[0]["text"]
+
+
+def test_resume_failure_still_completes_consent(pending, identity, monkeypatch):
+    sent = _ephemerals(monkeypatch)
+    monkeypatch.setattr(oauth_callback, "enqueue", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("sqs down")))
+    pending_auth_store().put(PendingAuth(**{**pending.__dict__, "resume_job": json.dumps(JOB)}))
+
+    result = oauth_callback.handler(
+        event("/oauth2/callback", {"session_id": "urn:session:abc"}, ["slack_agent_oauth=n1"]), None
+    )
+    assert result["statusCode"] == 200
+    assert len(identity.calls) == 1
+    assert "Ask me your question again" in sent[0]["text"]

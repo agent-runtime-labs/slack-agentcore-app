@@ -1,3 +1,4 @@
+import json
 import time
 
 import pytest
@@ -100,6 +101,37 @@ def test_auth_required_sends_private_link(monkeypatch, slack):
     assert pending.runtime_user_id == "slack-T999-UALICE"
     assert pending.session_uri == "urn:s1"
     assert "LinkedIn" in messages[1][1]["text"]
+    # The job is saved with the link, so the callback can answer it once the user connects.
+    assert json.loads(pending.resume_job) == JOB
+
+
+def test_resumed_flag_is_not_saved_with_the_link(monkeypatch, slack):
+    monkeypatch.setattr(
+        agent_worker,
+        "invoke_agent",
+        lambda *a, **k: {"message": "x", "authRequired": {"provider": "GitHub", "authorizationUrl": "https://gh/auth"}},
+    )
+    agent_worker.process({**JOB, agent_worker.RESUMED_AFTER_AUTH: True})
+
+    link = next(kwargs for kind, kwargs in slack.calls if kind == "ephemeral")["blocks"][0]["accessory"]["url"]
+    saved = json.loads(pending_auth_store().get(link.split("nonce=")[1]).resume_job)
+    assert agent_worker.RESUMED_AFTER_AUTH not in saved
+
+
+def test_resumed_job_reopens_placeholder_and_answers(monkeypatch, slack):
+    monkeypatch.setattr(agent_worker, "invoke_agent", lambda *a, **k: {"message": "3 open PRs", "authRequired": None})
+    agent_worker.process({**JOB, agent_worker.RESUMED_AFTER_AUTH: True})
+
+    assert _messages(slack.calls) == [
+        ("update", {"channel": "C123", "ts": "1.2", "text": agent_worker.RESUMED_TEXT}),
+        ("update", {"channel": "C123", "ts": "1.2", "text": "3 open PRs"}),
+    ]
+    assert _reactions(slack.calls) == [
+        ("reaction_remove", agent_worker.REACTION_AUTH_REQUIRED),
+        ("reaction_add", agent_worker.REACTION_WORKING),
+        ("reaction_remove", agent_worker.REACTION_WORKING),
+        ("reaction_add", agent_worker.REACTION_DONE),
+    ]
 
 
 def test_slow_agent_call_gets_interim_update(monkeypatch, slack):

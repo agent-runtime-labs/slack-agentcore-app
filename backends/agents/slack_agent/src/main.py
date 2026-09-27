@@ -67,7 +67,9 @@ Only call get_my_linkedin_profile when the user explicitly asks about their Link
 use_github when the user explicitly asks about their GitHub account, repositories, issues, or pull requests."""
 
 CONSENT_RULE = """If a tool returns AUTHORIZATION_REQUIRED, ask them to use the private Connect link that was just
-sent to them and ask again. Never make up details for an account that is not connected."""
+sent to them. Never make up details for an account that is not connected. People connect accounts through a private
+link the thread doesn't show, so an earlier message saying an account isn't connected may be out of date: never repeat
+it from the thread, always call the tool to find out."""
 
 WRITE_RELAY_RULE = """When one of the use_* tools drafts a write action (opening an issue/PR, pushing files, editing a
 page, etc.) and asks for confirmation, relay that draft to the user verbatim. If they confirm, call the same tool again

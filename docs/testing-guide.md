@@ -266,7 +266,7 @@ Check that:
 
 **Expected:**
 - The browser page says **"LinkedIn connected ✅"**.
-- The `slack-app` log shows `chat.postEphemeral {… 'text': '✅ LinkedIn connected. Ask me your question again.'}`.
+- The `slack-app` log shows `chat.postEphemeral {… 'text': '✅ LinkedIn connected. Picking your question back up now…'}`.
 
 What happened: the callback found the nonce cookie, confirmed the `session_id` matched the stored session, deleted the nonce, and called `CompleteResourceTokenAuth` with `userId=slack-TLOCALDEV1-UALICE`.
 
@@ -415,7 +415,7 @@ Proves discovery worked (`/.well-known/oauth-protected-resource/mcp` →
 **Expected:**
 - The page says **"Linear connected ✅"**.
 - `slack-app` logs `Exchanged authorization code for linear tokens` and the ephemeral
-  `✅ Linear connected. Ask me your question again.`
+  `✅ Linear connected. Picking your question back up now…`
 
 What happened, and how it differs from level 4: the callback checked the cookie nonce,
 compared `state` with the pending record, compared `iss` with the issuer discovery
@@ -587,7 +587,7 @@ Repeat tests 6a–6j against the deployed app. The two CIMD steps in full:
 | # | In Slack | Expected |
 |---|---|---|
 | 7-L1 | `@bot what are my open Linear issues?` (first time) | Public "🔐 I need access to your Linear account first", plus a private **Connect Linear** button ("Only visible to you") pointing at `https://<api>.execute-api.<region>.amazonaws.com/oauth2/start?nonce=…` |
-| 7-L2 | Click it, approve on Linear's consent screen | Browser shows **"Linear connected ✅"**; an ephemeral "✅ Linear connected. Ask me your question again." appears in the thread |
+| 7-L2 | Click it, approve on Linear's consent screen | Browser shows **"Linear connected ✅"**; an ephemeral "✅ Linear connected. Picking your question back up now…" appears in the thread, and the bot's 🔐 reply turns into the answer to the original question (no need to ask again) |
 | 7-L3 | Ask again | Your real issues, no new button |
 | 7-L4 | `@bot create an issue in <team> called "Test from Slack"` | The bot **drafts** the issue and asks you to confirm — it never writes on the first call. Reply confirming, and it creates it. Check Linear. |
 | 7-N1 | `@bot search my Notion for <page title>` | **Connect Notion** button; its consent screen asks which pages to share — pick at least one |

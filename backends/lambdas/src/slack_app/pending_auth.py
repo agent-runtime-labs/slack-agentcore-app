@@ -4,6 +4,8 @@ Flow: the worker stores a record under a random nonce and DMs the user a link to
 /oauth2/start?nonce=...; /oauth2/start drops the nonce into a cookie and redirects
 to the provider (LinkedIn, GitHub, Linear, ...); /oauth2/callback reads the cookie back
 and checks the session before completing the token exchange. The nonce is single-use.
+Once the account is connected, the callback queues the original request again
+(`resume_job`), so the bot answers it without the user having to ask twice.
 
 Records serve both consent flows:
 
@@ -41,6 +43,10 @@ class PendingAuth:
     expires_at: int
     # None for AgentCore Identity consents. See docs/cimd-providers.md for the schema.
     cimd: dict | None = None
+    # The worker job (JSON) that hit the consent wall. The callback queues it again once
+    # the account is connected, so the user doesn't have to repeat the question. JSON
+    # rather than a map because DynamoDB would hand numbers back as Decimal.
+    resume_job: str = ""
 
     def expired(self, now: float | None = None) -> bool:
         return (now or time.time()) >= self.expires_at
