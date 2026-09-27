@@ -1,4 +1,5 @@
 from slack_app import thread_history
+from slack_app.attachments import Attachment
 from slack_app.slack import PLACEHOLDER_TEXT, record_incoming, slack_client
 from slack_app.thread_history import ThreadMessage, read_thread, readable
 
@@ -126,3 +127,32 @@ def test_dry_run_client_serves_the_thread_it_has_seen():
         ThreadMessage("AgentCore Assistant", "Hello!", from_assistant=True),
     ]
     assert thread.message == ThreadMessage("UALICE", "thanks")
+
+
+def test_files_stay_in_the_thread_as_references():
+    architecture = {"id": "F1", "name": "architecture-v2.pdf", "mimetype": "application/pdf", "size": 1_258_291}
+    messages = [
+        _msg("1.0", "", "UBOB", "Bob", subtype="file_share", files=[architecture]),
+        _msg("1.1", "looks good to me", "UCAROL", "Carol"),
+        _msg("1.2", "does v2 still use SQS FIFO?", "UALICE", "Alice"),
+    ]
+    thread = read_thread(FakeSlack([(messages, "")]), "C1", "1.0", "1.2", "UBOT")
+
+    bob = thread.history[0]
+    assert bob.text == ""
+    assert bob.files == (Attachment("F1", "architecture-v2.pdf", "application/pdf", 1_258_291),)
+    assert bob.with_files == "[attached: architecture-v2.pdf (1.2 MB)]"
+    assert bob.as_dict() == {
+        "author": "Bob",
+        "text": "",
+        "fromAssistant": False,
+        "files": [{"id": "F1", "name": "architecture-v2.pdf", "mimetype": "application/pdf", "size": 1_258_291}],
+    }
+    assert thread.message.files == ()
+    assert "files" not in thread.message.as_dict()
+
+
+def test_dry_run_client_remembers_files():
+    record_incoming({"channel": "C1", "ts": "100.0", "user": "UALICE", "text": "", "files": [{"id": "F9", "name": "a.png"}]}, "100.0")
+    thread = read_thread(slack_client(), "C1", "100.0", "100.0", "UBOTLOCAL")
+    assert thread.message.files == (Attachment("F9", "a.png"),)

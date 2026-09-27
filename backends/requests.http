@@ -36,4 +36,28 @@ X-Amzn-Bedrock-AgentCore-Runtime-Session-Id: {{sessionId}}
   "sessionId": "{{sessionId}}"
 }
 
+### Read a public link (fetch_url)
+POST {{agent}}/invocations
+Content-Type: application/json
+X-Amzn-Bedrock-AgentCore-Runtime-Session-Id: {{sessionId}}
+
+{
+  "prompt": "Summarise https://docs.python.org/3/whatsnew/3.13.html in 3 bullets",
+  "userId": "slack-TLOCALDEV1-ULOCALDEV1",
+  "sessionId": "{{sessionId}}"
+}
+
+### A message that is only a file. Replace the ID with a real Slack file ID (F...) and
+### set SLACK_BOT_TOKEN (with files:read) for the agent to download it.
+POST {{agent}}/invocations
+Content-Type: application/json
+X-Amzn-Bedrock-AgentCore-Runtime-Session-Id: {{sessionId}}
+
+{
+  "prompt": "",
+  "files": [{"id": "F0123ABCDEF", "name": "invoice-sept.pdf", "mimetype": "application/pdf", "size": 52000}],
+  "userId": "slack-TLOCALDEV1-ULOCALDEV1",
+  "sessionId": "{{sessionId}}"
+}
+
 ### Slack events need a valid signature: use scripts/send_test_event.py instead.

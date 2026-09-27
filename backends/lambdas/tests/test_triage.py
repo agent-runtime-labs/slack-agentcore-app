@@ -1,6 +1,7 @@
 import pytest
 
 from slack_app import triage
+from slack_app.attachments import Attachment
 from slack_app.thread_history import ThreadMessage
 
 
@@ -65,6 +66,12 @@ def test_prompt_includes_the_thread(bedrock):
     assert "[Alice] Bob, can you review #15?" in prompt
     assert "thread the assistant has been answering in" in prompt
     assert '<new_message author="Bob">\nSure, is it the login fix one?\n</new_message>' in prompt
+
+
+def test_transcript_names_attached_files(bedrock):
+    history = [ThreadMessage("Bob", "", files=(Attachment("F1", "architecture-v2.pdf", size=1_258_291),))]
+    triage.decide("does v2 still use SQS FIFO?", "Alice", history, bot_in_thread=False)
+    assert "[Bob] [attached: architecture-v2.pdf (1.2 MB)]" in _prompt(bedrock)
 
 
 def test_no_thread_means_no_transcript(bedrock):

@@ -1,7 +1,8 @@
 """SQS consumer — calls the agent as the Slack user and writes the answer back to Slack.
 
 Every job starts by reading the Slack thread (thread_history.py): it is the only
-conversation history the bot has, for triage and for the agent alike.
+conversation history the bot has, for triage and for the agent alike. Files attached to
+the new message go to the agent as references; it downloads them itself.
 
 Triage jobs (channel messages that didn't @mention the bot, see slack_events.py) then
 ask the model what to do with the message (triage.py). REPLY gets the reaction and
@@ -21,6 +22,7 @@ import threading
 import time
 
 from slack_app.agent_client import MODE_CORRECT, invoke_agent
+from slack_app.attachments import from_files
 from slack_app.config import public_base_url
 from slack_app.identity import runtime_session_id, runtime_user_id
 from slack_app.pending_auth import TTL_SECONDS, PendingAuth, new_nonce, pending_auth_store
@@ -36,7 +38,7 @@ from slack_app.slack import (
     remove_reaction,
     slack_client,
 )
-from slack_app.thread_history import Thread, read_thread, readable
+from slack_app.thread_history import Thread, ThreadMessage, read_thread, readable
 from slack_app.triage import CORRECT, IGNORE, REACT, decide
 
 logger = logging.getLogger(__name__)
@@ -57,10 +59,12 @@ def process(job: dict) -> None:
     # The new message as the thread shows it (names instead of <@U...>), and who sent it.
     prompt = thread.message.text if thread.message and thread.message.text else job["text"]
     requester = thread.message.author if thread.message else job["user"]
+    files = thread.message.files if thread.message else from_files(job.get("files"))
 
     triage = job.get("triage")
     if triage:
-        new_text = thread.message.text if thread.message else readable(triage["text"])
+        latest = thread.message or ThreadMessage(requester, readable(triage["text"]), files=files)
+        new_text = latest.with_files
         in_thread = triage["bot_in_thread"] or thread.bot_in_thread
         action = decide(new_text, requester, thread.history, in_thread)
         logger.info("Triage says %s for message %s", action, job["user_message_ts"])
@@ -90,6 +94,7 @@ def process(job: dict) -> None:
             job["placeholder_ts"],
             thread=[message.as_dict() for message in thread.history],
             requester=requester,
+            files=[file.as_dict() for file in files],
         )
     except Exception:
         # Don't re-raise: an SQS retry would run the agent again and double-post.

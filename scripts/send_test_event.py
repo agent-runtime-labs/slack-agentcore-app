@@ -2,6 +2,12 @@
 
     python scripts/send_test_event.py --text "What is my LinkedIn name?"
     python scripts/send_test_event.py --channel-message --thread-ts <ts> --text "And my GitHub?"
+    python scripts/send_test_event.py --text "Why is this failing?" --file error.png=F0123ABCDEF
+    python scripts/send_test_event.py --dm --text "" --file invoice.pdf
+
+--file attaches a file reference, as Slack does when someone uploads one. With a real
+file ID from your workspace (and SLACK_BOT_TOKEN set for Tilt), the agent downloads and
+reads it; without one it gets a made-up ID and tells you it couldn't open the file.
 
 Uses SLACK_SIGNING_SECRET from the environment (Tilt's default is
 "local-dev-signing-secret"). With SLACK_DRY_RUN=true the replies, including the
@@ -12,6 +18,7 @@ import argparse
 import hashlib
 import hmac
 import json
+import mimetypes
 import os
 import time
 import urllib.error
@@ -33,6 +40,13 @@ def main() -> None:
         action="store_true",
         help="Send as a plain channel message without an @mention (answered in threads the bot is in, else triaged)",
     )
+    parser.add_argument(
+        "--file",
+        action="append",
+        default=[],
+        metavar="NAME[=FILE_ID]",
+        help="Attach a file reference; repeat for several. FILE_ID is a real Slack file ID (F...)",
+    )
     parser.add_argument("--url", default="http://localhost:8081/slack/events")
     args = parser.parse_args()
 
@@ -53,6 +67,10 @@ def main() -> None:
         event["channel_type"] = "im" if args.dm else "channel"
     if args.thread_ts:
         event["thread_ts"] = args.thread_ts
+    if args.file:
+        event["files"] = [_file(spec, index) for index, spec in enumerate(args.file)]
+        if plain:
+            event["subtype"] = "file_share"
 
     body = json.dumps({
         "type": "event_callback",
@@ -82,6 +100,15 @@ def main() -> None:
         raise SystemExit(f"{err.code} {err.read().decode()}") from None
     print(f"thread_ts={args.thread_ts or ts}  (pass --thread-ts to continue this conversation)")
     print("Watch the slack-app logs in Tilt for the agent's reply.")
+
+
+def _file(spec: str, index: int) -> dict:
+    name, _, file_id = spec.partition("=")
+    return {
+        "id": file_id or f"FLOCALDEV{index}",
+        "name": name,
+        "mimetype": mimetypes.guess_type(name)[0] or "application/octet-stream",
+    }
 
 
 if __name__ == "__main__":

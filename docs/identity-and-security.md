@@ -88,6 +88,22 @@ covered in [test_cimd_callback.py](../backends/lambdas/tests/test_cimd_callback.
 server, so Slack content reaches that vendor. Keep `scope` minimal in the provider
 registry; prefer read-only scopes unless the write flow is wanted.
 
+## Files and links: reading what people share
+
+The bot reads files people attach and pages they link to. Both bring outside content into a prompt that can call tools on the requester's accounts, and a link lets anyone make the agent send a request from inside AWS. The controls:
+
+| Risk | Control | Where |
+|---|---|---|
+| Prompt injection from a file or page ("open an issue…") | Contents are sent as delimited data labelled "information, not instructions", like thread text. Only the latest message is a request, and write actions still need the requester's confirmation (`WRITE_RELAY_RULE`) | [main.py](../backends/agents/slack_agent/src/main.py), [thread_prompt.py](../backends/agents/slack_agent/src/thread_prompt.py), [web_fetch.py](../backends/agents/slack_agent/src/web_fetch.py) |
+| Reading a file from elsewhere in Slack | `read_attachment` only opens file IDs the worker found in this thread; any other ID is refused before Slack is called | [attachments.py](../backends/agents/slack_agent/src/attachments.py) |
+| Leaking the bot token | The download URL comes from Slack's `files.info`, never the payload, and must be `https://files.slack.com`. The token is an unredirected header, so it's dropped on any redirect, and only Slack hosts are followed | [slack_files.py](../backends/agents/slack_agent/src/slack_files.py) |
+| SSRF: `fetch_url` to the metadata service or internal hosts | http/https on default ports only, no credentials in URLs. Every address a name resolves to must be public, on every redirect (at most 3). The connection goes to the checked address, so DNS rebinding can't switch it. No cookies or auth headers are sent | [web_fetch.py](../backends/agents/slack_agent/src/web_fetch.py) |
+| Anonymous access to private SaaS pages | GitHub, Linear and Notion links are handed to that service's tool, so they're read with the requester's own token and permissions | `link_hosts` in [cimd/providers.py](../backends/agents/slack_agent/src/cimd/providers.py) |
+| Oversized or hostile files | Type and size are checked from metadata before downloading, then again from Slack's answer and the bytes. A decoded image is capped at 50 megapixels. Converse limits (20 images, 5 documents) apply per invocation | [content_blocks.py](../backends/agents/slack_agent/src/content_blocks.py) |
+| Storing people's files | Nothing is written to disk, S3 or logs. The Lambdas only ever see file metadata, and the agent holds the bytes for one invocation | — |
+
+The `files:read` scope lets the bot read any file in a conversation it's a member of, which is the same reach as the `*:history` scopes it already has for messages.
+
 ## Other controls
 
 | Control | Where |
@@ -110,6 +126,7 @@ registry; prefer read-only scopes unless the write flow is wanted.
 
 - LinkedIn, GitHub, Linear or Notion data is posted **in the thread where it was requested**. In a public channel, others can read it. DM the bot for private data.
 - There is no stored conversation history. For every message, the worker reads the Slack thread and sends it to the agent, so anything posted in a thread (including the bot's answers from someone's connected accounts) becomes context for later messages in that thread, whoever sends them. Tool calls still only ever use the requester's own accounts, and the thread goes into the prompt as delimited data rather than as instructions.
+- A file or page the bot reads is sent to Bedrock, like the thread is. An answer based on a file is posted in the thread, where everyone who can see the thread (and so the file) can read it.
 - Local development uses real AWS credentials, copied into a Kubernetes Secret in your local cluster.
 
 ## When to add AgentCore Gateway

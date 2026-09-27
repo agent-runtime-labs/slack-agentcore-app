@@ -5,6 +5,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
+import slack_api  # noqa: E402
 import slack_progress  # noqa: E402
 
 
@@ -14,9 +15,9 @@ def _tool_use_event(name: str) -> dict:
 
 @pytest.fixture(autouse=True)
 def clear_token_cache():
-    slack_progress._bot_token.cache_clear()
+    slack_api.bot_token.cache_clear()
     yield
-    slack_progress._bot_token.cache_clear()
+    slack_api.bot_token.cache_clear()
 
 
 @pytest.fixture

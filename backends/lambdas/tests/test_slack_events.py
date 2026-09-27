@@ -173,3 +173,45 @@ def test_bot_user_id_falls_back_to_auth_test(queued):
     del payload["authorizations"]
     slack_events.handler(signed_event(payload), None)
     assert queued == []
+
+
+PDF = {"id": "F1", "name": "invoice-sept.pdf", "mimetype": "application/pdf", "size": 52_000, "url_private": "u"}
+
+
+def test_file_with_no_text_in_a_dm_is_handled(queued):
+    payload = mention_payload(text="", type="message", channel_type="im", subtype="file_share", files=[PDF])
+    slack_events.handler(signed_event(payload), None)
+
+    job = queued[0][0]
+    assert job["text"] == ""
+    assert job["files"] == [{"id": "F1", "name": "invoice-sept.pdf", "mimetype": "application/pdf", "size": 52_000}]
+    assert job["placeholder_ts"]
+
+
+def test_mention_with_a_file_carries_the_file(queued):
+    slack_events.handler(signed_event(mention_payload(text="<@UBOT> why is this failing?", files=[PDF])), None)
+    job = queued[0][0]
+    assert job["text"] == "why is this failing?"
+    assert [file["id"] for file in job["files"]] == ["F1"]
+
+
+def test_file_shared_in_a_channel_goes_to_triage(queued, reactions):
+    payload = channel_message_payload(text="Here's the Q3 export", subtype="file_share", files=[PDF])
+    slack_events.handler(signed_event(payload), None)
+
+    job = queued[0][0]
+    assert job["triage"] == {"text": "Here's the Q3 export", "bot_in_thread": False}
+    assert job["files"][0]["name"] == "invoice-sept.pdf"
+    assert reactions == []
+
+
+def test_messages_without_files_have_no_files_key(queued):
+    slack_events.handler(signed_event(mention_payload()), None)
+    assert "files" not in queued[0][0]
+
+
+def test_deleted_file_with_no_text_is_ignored(queued):
+    gone = {"id": "F1", "name": "x.pdf", "mode": "tombstone"}
+    payload = mention_payload(text="", type="message", channel_type="im", subtype="file_share", files=[gone])
+    slack_events.handler(signed_event(payload), None)
+    assert queued == []

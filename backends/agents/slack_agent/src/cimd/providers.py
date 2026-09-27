@@ -59,6 +59,11 @@ class CimdProvider:
     """Other words a user might say for this product, folded into the tool description
     so the chat model routes "my tickets" or "my wiki" to the right tool."""
 
+    link_hosts: tuple[str, ...] = field(default_factory=tuple)
+    """Web hosts whose links this tool should read as the user, e.g. "linear.app".
+    fetch_url hands a link on any of them (or a subdomain) to this tool instead of
+    fetching it anonymously, which would only get a sign-in page (see web_fetch.py)."""
+
     @property
     def tool_name(self) -> str:
         """The name the chat model calls, e.g. "use_linear"."""
@@ -74,6 +79,7 @@ LINEAR = CimdProvider(
     scope="read write",
     summary="issues, projects, cycles, teams and comments",
     aliases=("tickets", "sprints", "backlog"),
+    link_hosts=("linear.app",),
     guidance=(
         "Linear organises work as issues inside teams, projects and cycles. Issue identifiers "
         "look like ENG-123 -- when the user gives one, use it directly instead of searching. "
@@ -90,6 +96,7 @@ NOTION = CimdProvider(
     scope="default",
     summary="pages, databases and their content",
     aliases=("wiki", "docs", "notes"),
+    link_hosts=("notion.so", "notion.site"),
     guidance=(
         "Notion content is reachable only if the user shared it with the connected integration, "
         "so an empty search result means 'not shared with me', not 'does not exist' -- say that "
