@@ -14,6 +14,11 @@ let the agent post its own live per-tool progress directly to Slack (see slack_p
 in the agent). As a fallback for turns where the agent never gets to post anything (no tool
 calls, a missing bot token in the agent's environment, ...), a timer here nudges the
 placeholder once if the call is still running past INTERIM_DELAY_SECONDS.
+
+When a tool needs the user to connect an account, the job is saved with the private
+connect link (pending_auth.py). Once they connect, the OAuth callback queues it again
+with RESUMED_AFTER_AUTH set, and the answer replaces the "I need access" message: the
+user never has to ask the same question twice.
 """
 
 import json
@@ -40,11 +45,13 @@ from slack_app.slack import (
 )
 from slack_app.thread_history import Thread, ThreadMessage, read_thread, readable
 from slack_app.triage import CORRECT, IGNORE, REACT, decide
+from slack_app.work_queue import RESUMED_AFTER_AUTH
 
 logger = logging.getLogger(__name__)
 
 INTERIM_DELAY_SECONDS = 6
 INTERIM_TEXT = "🔎 Still working on it — checking tools and thinking this through…"
+RESUMED_TEXT = "🔄 Connected — picking your question back up…"
 
 
 def handler(event: dict, context) -> dict:
@@ -79,6 +86,9 @@ def process(job: dict) -> None:
         placeholder_ts = acknowledge(slack, job["team_id"], job["channel"], job["user_message_ts"], job["thread_ts"])
         job = {**job, "placeholder_ts": placeholder_ts}
 
+    if job.get(RESUMED_AFTER_AUTH):
+        _resume(slack, job)
+
     user_id = runtime_user_id(job["team_id"], job["user"])
     session_id = runtime_session_id(job["team_id"], job["channel"], job["thread_ts"], job["user"])
 
@@ -111,7 +121,7 @@ def process(job: dict) -> None:
         _send_connect_link(slack, job, user_id, auth)
         text = (
             f"🔐 <@{job['user']}> I need access to your {provider} account first. "
-            "I've sent you a private link — ask me again once you've connected."
+            "I've sent you a private link — once you've connected, I'll answer this automatically."
         )
         _finish_reaction(slack, job, REACTION_AUTH_REQUIRED)
     else:
@@ -168,6 +178,7 @@ def _send_connect_link(slack, job: dict, user_id: str, auth: dict) -> None:
         slack_user=job["user"],
         thread_ts=job["thread_ts"],
         expires_at=int(time.time()) + TTL_SECONDS,
+        resume_job=json.dumps({k: v for k, v in job.items() if k not in ("triage", RESUMED_AFTER_AUTH)}),
     )
     pending_auth_store().put(pending)
     link = f"{public_base_url()}/oauth2/start?nonce={pending.nonce}"
@@ -194,6 +205,15 @@ def _send_connect_link(slack, job: dict, user_id: str, auth: dict) -> None:
             }
         ],
     )
+
+
+def _resume(slack, job: dict) -> None:
+    """Turns the "I need access" message back into a working placeholder, 🔒 back into 👀."""
+    _update(slack, job, RESUMED_TEXT)
+    ts = job.get("user_message_ts")
+    if ts:
+        remove_reaction(slack, job["channel"], ts, REACTION_AUTH_REQUIRED)
+        add_reaction(slack, job["channel"], ts, REACTION_WORKING)
 
 
 def _update(slack, job: dict, text: str) -> None:

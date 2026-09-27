@@ -14,12 +14,16 @@ Two consent flows land on the same callback and are told apart by the pending re
   * **CIMD** (Linear, Notion, ...) -- we are the OAuth client, so the provider returns
     with `?code=&state=` and we perform the token exchange ourselves.
 
+Either way, once the account is connected the request that needed it is queued again
+(PendingAuth.resume_job), so the bot answers it in Slack without being asked twice.
+
 Both are bound to the user the same way: the single-use nonce in an HttpOnly cookie must
 match the pending record created when the bot sent the private link. The CIMD path adds
 the OAuth `state` check and, where the server supports it, the `iss` check from RFC 9207.
 """
 
 import hmac
+import json
 import logging
 import time
 from functools import lru_cache
@@ -31,6 +35,7 @@ from slack_app.apigw import cookie, html_response, json_response, query_param, r
 from slack_app.config import cookie_secure
 from slack_app.pending_auth import pending_auth_store
 from slack_app.slack import slack_client
+from slack_app.work_queue import RESUMED_AFTER_AUTH, enqueue
 
 logger = logging.getLogger(__name__)
 
@@ -160,19 +165,35 @@ def _complete_cimd(event: dict, store, pending) -> dict:
 
 
 def _connected(pending) -> dict:
-    _notify(pending)
-    return _page(
-        200, f"{pending.provider} connected ✅", "You can close this tab and ask the bot again in Slack.", clear_cookie=True
-    )
+    resumed = _resume(pending)
+    _notify(pending, resumed)
+    next_step = "I'm answering your question in Slack now." if resumed else "Ask the bot again in Slack."
+    return _page(200, f"{pending.provider} connected ✅", f"You can close this tab. {next_step}", clear_cookie=True)
 
 
-def _notify(pending) -> None:
+def _resume(pending) -> bool:
+    """Queue the request that needed this consent again. False if there's none, or it failed."""
+    if not pending.resume_job:
+        return False  # a record written before jobs were saved with the link
+    try:
+        job = {**json.loads(pending.resume_job), RESUMED_AFTER_AUTH: True}
+        # Same group as the original, so it runs in order with the thread's other messages.
+        # The nonce is single-use, so it makes a dedup ID no retry can collide with.
+        enqueue(job, group_id=f"{job['channel']}-{job['thread_ts']}", dedup_id=f"resume-{pending.nonce}")
+    except Exception:
+        logger.exception("Failed to resume the request after %s consent", pending.provider)
+        return False
+    return True
+
+
+def _notify(pending, resumed: bool) -> None:
+    next_step = "Picking your question back up now…" if resumed else "Ask me your question again."
     try:
         slack_client().chat_postEphemeral(
             channel=pending.channel,
             user=pending.slack_user,
             thread_ts=pending.thread_ts,
-            text=f"✅ {pending.provider} connected. Ask me your question again.",
+            text=f"✅ {pending.provider} connected. {next_step}",
         )
     except Exception:
         logger.exception("Failed to notify Slack user")

@@ -16,6 +16,10 @@ from slack_app.config import is_local
 
 logger = logging.getLogger(__name__)
 
+# Set on a job the OAuth callback queues again after the user connected an account
+# (see pending_auth.PendingAuth.resume_job).
+RESUMED_AFTER_AUTH = "resumed_after_auth"
+
 
 @lru_cache(maxsize=1)
 def _sqs():
