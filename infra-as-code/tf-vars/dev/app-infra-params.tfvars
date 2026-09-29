@@ -16,7 +16,7 @@ cimd_model_id  = "us.anthropic.claude-haiku-4-5-20251001-v1:0"
 
 # Team knowledge memory: find and cite earlier Slack threads (see docs/architecture.md).
 # Needs extra Slack scopes and events first (docs/slack-setup.md).
-knowledge_enabled           = false
+knowledge_enabled           = true
 knowledge_excluded_channels = []
 
 default_tags = {
