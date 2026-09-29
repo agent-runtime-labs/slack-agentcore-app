@@ -1,0 +1,47 @@
+{
+  "repo": "agent-runtime-labs/slack-agentcore-app",
+  "cron": "37 2 * * *",
+  "slots": [
+    { "deep": "triage-quality", "scan": ["thread-history", "slack-events"] },
+    { "deep": "agent-tools", "scan": ["github-tool", "linkedin-tool"] },
+    { "deep": "oauth-and-identity", "scan": ["oauth-callback", "cimd"] },
+    { "deep": "files-and-links", "scan": ["attachments", "web-fetch"] },
+    { "deep": "infra-and-dev-loop", "scan": ["terraform", "tilt"] }
+  ],
+  "bonusModuli": {
+    "25": "docs-accuracy",
+    "75": "per-user-token-isolation"
+  },
+  "controlPlaneProbes": [
+    "uv --version || true",
+    "terraform version || true",
+    "make dream-check || true",
+    "make test 2>&1 | tail -3 || true"
+  ],
+  "buildStep": {
+    "cmd": "command -v uv || pip install uv",
+    "degradeOnWasmFailure": false
+  },
+  "evaluatorEntrypoints": {
+    "bench": "make test",
+    "dream-check": "make dream-check",
+    "tf-fmt": "terraform fmt -check -recursive infra-as-code"
+  },
+  "adrConvention": { "pad": 4, "dir": "docs/adrs" },
+  "competitors": [
+    "Slack AI",
+    "Amazon Q Developer in Slack",
+    "Glean",
+    "Dust"
+  ],
+  "extraDisciplines": [
+    "evaluation-is-not-promotion",
+    "never-call-aws-or-run-terraform-apply",
+    "never-post-to-a-real-slack-workspace",
+    "never-weaken-per-user-token-isolation"
+  ],
+  "ledgerPath": "docs/dream-cycle/LEDGER.md",
+  "branchPrefix": "dream/",
+  "labels": ["dream-cycle", "research"],
+  "autoMerge": false
+}
