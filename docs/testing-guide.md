@@ -63,7 +63,7 @@ curl -s localhost:8081/healthz              # {"status":"ok"}
 make test
 ```
 
-**Expected:** `103 passed` (lambdas) and `129 passed` (agent). Tilt also runs these as the **unit-tests** resource whenever you change the source.
+**Expected:** three `passed` lines, no failures: lambdas, agent, and `scripts/tests` (the Dream Machine checker and the Tilt/`make test` parity check). Tilt runs the same three suites as the **unit-tests** resource whenever you change the source.
 
 | File | What it checks |
 |---|---|
@@ -79,6 +79,8 @@ make test
 | [test_content_blocks.py](../backends/agents/slack_agent/tests/test_content_blocks.py) | File type → Converse block, unsupported types with a reason, image downscaling, safe unique document names, UTF-8 check, the 20-image / 5-document limits |
 | [test_slack_files.py](../backends/agents/slack_agent/tests/test_slack_files.py) | Only `files.slack.com` download URLs; the token is never sent on a redirect; a sign-in page or an oversized file is refused; a missing `files:read` scope is explained |
 | [test_web_fetch.py](../backends/agents/slack_agent/tests/test_web_fetch.py) | SSRF: private, loopback, link-local, metadata and CGNAT addresses, redirects to them, odd schemes, ports and credentials in URLs; connecting to the address that was checked; readable page text; PDF links; routing GitHub/Linear/Notion links |
+| [test_dream_check.py](../scripts/tests/test_dream_check.py) | The Dream Machine config and ledger rules (`make dream-check`) |
+| [test_dev_loop_parity.py](../scripts/tests/test_dev_loop_parity.py) | Tilt's **unit-tests** resource runs, and watches, the same suites as `make test` |
 
 ---
 

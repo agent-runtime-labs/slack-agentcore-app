@@ -107,8 +107,11 @@ UV = 'uv run --quiet --no-project --python 3.13 '
 local_resource(
     'unit-tests',
     cmd=UV + '--with-requirements backends/lambdas/requirements-dev.txt pytest -q backends/lambdas/tests && ' +
-        UV + '--with-requirements backends/agents/slack_agent/requirements-dev.txt pytest -q backends/agents/slack_agent/tests',
-    deps=['backends/lambdas/src', 'backends/lambdas/tests', 'backends/agents/slack_agent/src', 'backends/agents/slack_agent/tests'],
+        UV + '--with-requirements backends/agents/slack_agent/requirements-dev.txt pytest -q backends/agents/slack_agent/tests && ' +
+        UV + '--with pytest pytest -q scripts/tests',
+    # Same suites as `make test` (scripts/tests/test_dev_loop_parity.py keeps them in step).
+    deps=['backends/lambdas/src', 'backends/lambdas/tests', 'backends/agents/slack_agent/src', 'backends/agents/slack_agent/tests',
+          'scripts', 'dream.config.json', 'docs/dream-cycle/LEDGER.md', 'Makefile'],
     labels=['test'],
 )
 
