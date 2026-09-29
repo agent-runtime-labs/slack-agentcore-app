@@ -34,6 +34,8 @@ Browser ─► API Gateway ─► λ oauth-callback ─► CompleteResourceToken
 │   ├── scripts/                identity-setup.sh, put-slack-secret.sh
 │   └── tf-wrapper.sh           ./tf-wrapper.sh <env> <init|plan|apply|destroy|output|validate>
 ├── scripts/send_test_event.py  Signed fake Slack events for local testing
+├── scripts/dream_check.py      Offline Dream Machine config/ledger checker
+├── dream.config.json           Dream Machine nightly settings (docs/dream-machine.md)
 ├── docs/                       Guides (below)
 ├── Tiltfile  Makefile  .env.tmpl
 ```
@@ -65,11 +67,13 @@ Then click **send-test-mention** in Tilt and follow the connect link that appear
 | [Deployment](docs/deployment.md) | Terraform with the S3 backend, updating, teardown, cost notes |
 | [Per-user identity & security](docs/identity-and-security.md) | Why tokens don't leak between users; session binding |
 | [Troubleshooting](docs/troubleshooting.md) | Common errors and fixes |
+| [Dream Machine](docs/dream-machine.md) | Nightly, evidence-gated self-improvement that opens draft PRs only |
 
 ## Common commands
 
 ```bash
-make test          # 232 unit tests (lambdas + agent)
+make test          # unit tests (lambdas + agent + Dream Machine checker)
+make dream-check   # Dream Machine: validate config + ledger, show tonight's focus
 make tf-validate   # terraform fmt check + validate
 make deploy        # ENV=dev by default
 make outputs       # Slack Request URL, runtime ARN, ...

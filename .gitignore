@@ -27,3 +27,6 @@ crash.log
 # OS / editors
 .DS_Store
 .idea/
+
+# Dream Machine (compiled prompts are build output)
+.dream/
