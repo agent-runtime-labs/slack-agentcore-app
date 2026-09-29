@@ -45,3 +45,17 @@ CIMD_MODEL_ID = os.getenv("CIMD_MODEL_ID", GITHUB_MODEL_ID)
 # How long a connection survives without being used before DynamoDB's TTL removes it
 # and the user is asked to reconnect.
 CIMD_CONNECTION_TTL_DAYS = int(os.getenv("CIMD_CONNECTION_TTL_DAYS", "90"))
+
+# --- Team knowledge memory (see past_threads.py and docs/architecture.md) -------------
+
+# The S3 Vectors index the knowledge indexer writes thread summaries to. Empty disables
+# search_past_threads, whatever the payload says: S3 Vectors has no local emulator, so
+# under Tilt this stays empty unless pointed at a real dev bucket.
+KNOWLEDGE_VECTOR_BUCKET = os.getenv("KNOWLEDGE_VECTOR_BUCKET", "")
+KNOWLEDGE_INDEX = os.getenv("KNOWLEDGE_INDEX", "threads")
+
+# Must match the model the indexer embeds summaries with (1024 dimensions, normalised).
+KNOWLEDGE_EMBEDDING_MODEL_ID = os.getenv("KNOWLEDGE_EMBEDDING_MODEL_ID", "amazon.titan-embed-text-v2:0")
+
+# Cosine similarity below which a past thread isn't worth showing the model.
+KNOWLEDGE_MIN_SIMILARITY = float(os.getenv("KNOWLEDGE_MIN_SIMILARITY", "0.35"))

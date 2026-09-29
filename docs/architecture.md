@@ -68,19 +68,20 @@ flowchart LR
     classDef ext fill:#eceff1,stroke:#455a64,color:#1a1a1a
 ```
 
-Five ideas explain most of the design:
+Six ideas explain most of the design:
 
 1. **Slack answers fast, the agent answers later.** Slack needs a reply within 3 seconds, so one Lambda only checks and queues the message. A second Lambda does the slow work.
 2. **The Slack thread is the only memory.** Nothing is stored between requests. The thread is read again every time and sent to the agent.
 3. **Every request runs as the person who asked.** The agent is invoked with `runtimeUserId=slack-<team>-<user>`, so Alice's tokens are never used for Bob.
 4. **Two ways to hold a user's tokens.** AWS holds them for LinkedIn and GitHub (AgentCore Identity). The app holds them for Linear and Notion (CIMD). Users see the same private "Connect" link either way.
 5. **Files and links travel as references.** Only the agent downloads a file or fetches a page, and only while answering.
+6. **What one thread learns, others can find (optional).** With `knowledge_enabled`, quiet threads are summarised into S3 Vectors, and the agent can search and cite them. This is knowledge *across* threads, not a second conversation history. See [2d](#2d-team-knowledge-memory-optional).
 
 ---
 
 ## Level 2 — Mid level
 
-Three views of the same system: how a message gets answered, how an account gets connected, and what happens inside the agent.
+Four views of the same system: how a message gets answered, how an account gets connected, what happens inside the agent, and how earlier threads are remembered.
 
 ### 2a. Answering a message
 
@@ -187,6 +188,7 @@ flowchart LR
             T3["use_linear · use_notion"]:::agentcore
             T4["read_attachment"]:::agentcore
             T5["fetch_url"]:::agentcore
+            T6["search_past_threads<br/>(knowledge on)"]:::agentcore
         end
 
         NA["Nested agents<br/>Claude Haiku 4.5"]:::model
@@ -199,6 +201,7 @@ flowchart LR
     CM["Linear / Notion MCP"]:::ext
     SF(["Slack files"]):::slack
     WEB["Public web"]:::ext
+    VEC[("S3 Vectors<br/>thread summaries")]:::data
 
     IN ==> PR ==> AG
     AG <==> LLM
@@ -212,6 +215,7 @@ flowchart LR
     NA -- "Linear / Notion token" --> CM
     T4 -- "bot token" --> SF
     T5 -- "public addresses only" --> WEB
+    T6 -- "QueryVectors,<br/>scope from the worker" --> VEC
     T1 & T2 & T3 -. "consent needed" .-> AS
 
     style RT fill:none,stroke:#00695c,stroke-dasharray:5 5
@@ -227,6 +231,80 @@ flowchart LR
 - **One lazy tool per service.** GitHub, Linear and Notion each expose dozens of MCP tools. The main agent sees one `use_<service>(request)` tool, and a short-lived nested agent works through that service's tool catalogue only when someone asks about it.
 - **AuthState** is how any tool says "this user must connect first". `main.py` reads it after the agent loop and returns `authRequired` to the worker.
 - **Correct mode** (from triage) builds an agent with **no tools**. It can only point back to something the bot itself posted earlier in the thread.
+
+### 2d. Team knowledge memory (optional)
+
+Off unless `knowledge_enabled = true`. The Slack thread stays the only conversation history. This adds what the team worked out in *other* threads: the same question asked again in another channel, a decision made last month, the person who fixed it.
+
+```mermaid
+flowchart LR
+    SLK(["Slack"]):::slack
+    EV["λ slack-events"]:::aws
+    KQ[("SQS knowledge-index<br/>delay 10 min · DLQ")]:::data
+    SCH["EventBridge<br/>daily sweep"]:::aws
+    IX["λ knowledge-indexer<br/>re-read · summarise · upsert"]:::aws
+    SUM["Claude Haiku<br/>one summary per thread"]:::model
+    TI["Titan Text<br/>Embeddings v2"]:::model
+    VEC[("S3 Vectors<br/>1024-d · cosine<br/>keys team:channel:ts#main / #side-n")]:::data
+    WK["λ agent-worker<br/>works out the search scope"]:::aws
+    RT["AgentCore Runtime<br/>search_past_threads"]:::agentcore
+
+    SLK == "message · edit · delete ·<br/>channel_left · group_left" ==> EV
+    EV == "one SQS message,<br/>IDs only" ==> KQ ==> IX
+    SCH --> IX
+    IX -- "conversations.info<br/>conversations.replies" --> SLK
+    IX -- "Converse" --> SUM
+    IX -- "embed" --> TI
+    IX == "PutVectors / DeleteVectors" ==> VEC
+    WK -- "conversations.info · members ·<br/>users.info (guest check)" --> SLK
+    WK == "knowledge: {scope, channelId, ...}" ==> RT
+    RT -- "embed query" --> TI
+    RT == "QueryVectors<br/>filter built from the scope" ==> VEC
+
+    classDef slack fill:#f3e5f5,stroke:#6a1b9a,color:#1a1a1a
+    classDef aws fill:#fff3e0,stroke:#e65100,color:#1a1a1a
+    classDef data fill:#e3f2fd,stroke:#1565c0,color:#1a1a1a
+    classDef agentcore fill:#e0f2f1,stroke:#00695c,color:#1a1a1a
+    classDef model fill:#fce4ec,stroke:#ad1457,color:#1a1a1a
+```
+
+**What gets indexed.** Every thread in the public and private channels the bot is a member of, whether or not the bot took part. A message with no replies isn't a thread yet and isn't indexed. Never indexed: DMs, group DMs, Slack Connect channels, channels in `knowledge_excluded_channels`, and anything a tool returned from someone's GitHub, Linear, Notion or LinkedIn account. The indexer's only input is `conversations.replies`. If `conversations.info` can't confirm a channel is internal, and whether it's public or private, the thread is skipped (fail closed).
+
+**When.** A thread is summarised once it has been quiet for 10 minutes, and again whenever it's picked up later:
+
+| Event | What happens |
+|---|---|
+| A person posts in an eligible channel | `slack-events` queues a `check` with `DelaySeconds=600`. It carries IDs only, no text. |
+| The check runs | Re-read the thread. If a person posted after this check's message, skip: that message's own check covers it. If nothing is new since the stored summary, skip. Otherwise summarise and overwrite. |
+| A message is edited, or a reply deleted | The same delayed check, forced to re-summarise the whole thread even if newer messages exist. |
+| A thread's first message is deleted | Its vectors are deleted straight away. With replies, Slack sends this as a `tombstone` edit. |
+| The bot leaves a channel (`channel_left`, `group_left`) | Every vector from that channel is deleted straight away. |
+| Daily sweep | For each channel with vectors, `conversations.info`: delete them if the bot has left, the channel is now Slack Connect or excluded, and rewrite `visibility` if it switched between public and private. If Slack can't be reached, nothing is deleted. |
+
+Bot messages, including the bot's own answers, never queue a check but are part of the summary. So five messages in a burst make one summary call:
+
+```
+10:00 Alice  → check at 10:10 → Bob posted later → skip
+10:03 Bob    → check at 10:13 → Carol posted later → skip
+10:05 Bot      (no check, but included in the summary)
+10:08 Carol  → check at 10:18 → quiet → summarise → PutVectors
+next day Dave → check 10 min later → re-summarise → same keys, overwritten
+```
+
+**The summary** ([summary.py](../backends/lambdas/src/slack_app/knowledge/summary.py)) is one model call (`knowledge_summary_model_id`, Claude Haiku 4.5 by default) with the thread quoted as data. It writes `PROBLEM`, `SOLUTION`, `STATUS`, `DECISIONS`, `SIDE POINTS`, `PEOPLE` and `LINKS`, or `SKIP` for chit-chat (then nothing is stored, and a stored summary is deleted). Only those fields are kept, each cut to a fixed length. The summary gets the key `team:channel:thread_ts#main`, and each side point (up to 3) gets `#side-1` to `#side-3`, so a question about something raised in passing still finds the thread. A thread too long for the prompt (60,000 characters) is summarised from its stored summary plus the messages since `last_message_ts`, except after an edit or a delete, which always start again from the thread.
+
+**Where search is allowed** ([scope.py](../backends/lambdas/src/slack_app/knowledge/scope.py)). The answer is posted where everyone in the channel reads it, so a past thread may only appear where everyone could already read its channel:
+
+| Asked in | Can find | Filter |
+|---|---|---|
+| Public channel, no guests | Public threads | `visibility = public` |
+| Private channel P, no guests | Public threads, plus P's own | `visibility = public OR channel_id = P` |
+| Any channel with a guest | Only that channel's own threads | `channel_id = <this channel>` |
+| DM, Slack Connect, or a channel Slack can't describe | Nothing: the tool isn't registered | — |
+
+Every filter also requires `team_id` and excludes the thread being answered. The worker checks for guests with `conversations.members` + `users.info` (`is_restricted`, `is_ultra_restricted`), caches the result per channel for an hour, and limits the search to the channel if the check fails or the channel has over 1,000 members. The model never picks the filter: the agent builds it from the scope, and checks each hit against the scope again.
+
+**Retrieval** ([past_threads.py](../backends/agents/slack_agent/src/past_threads.py)). `search_past_threads(query)` embeds the query with Titan, runs `QueryVectors` (top 20), collapses side points into their thread, drops anything below a cosine similarity of 0.35 (`KNOWLEDGE_MIN_SIMILARITY`), and returns at most 5 threads in `<past_thread channel= started= last_reply= status= people= link=>` tags as untrusted data. The system prompt tells the model to search first for "has this happened before?", "how do we…?" and "what did we decide…?" questions, and to cite what it uses ("in #platform on 12 Sep, Carol found…") as what was found then, not as fact. It isn't run on every request.
 
 ---
 
@@ -248,6 +326,9 @@ flowchart LR
         ENG[("DynamoDB<br/>engaged-threads<br/>TTL 7 days")]:::data
         PA[("DynamoDB<br/>pending-oauth<br/>TTL 10 min")]:::data
         TOK[("DynamoDB<br/>cimd-tokens<br/>per user + provider")]:::data
+        KQ[("SQS knowledge-index<br/>+ DLQ (optional)")]:::data
+        IX["λ knowledge-indexer<br/>(optional)"]:::aws
+        VEC[("S3 Vectors<br/>thread summaries")]:::data
 
         subgraph AC["Bedrock AgentCore"]
             RT["Runtime<br/>Strands agent"]:::agentcore
@@ -257,6 +338,7 @@ flowchart LR
         BRT["Bedrock · Claude Haiku 4.5<br/>triage"]:::model
         BR["Bedrock · Claude Haiku 4.5<br/>chat loop"]:::model
         BR2["Bedrock · Claude Haiku 4.5<br/>nested agents"]:::model
+        BRK["Bedrock · Claude Haiku 4.5 summaries<br/>+ Titan embeddings"]:::model
     end
 
     LI["LinkedIn<br/>OAuth + REST /v2/userinfo"]:::ext
@@ -282,6 +364,10 @@ flowchart LR
     RT -- "read + refresh" --> TOK
     RT -- "read_attachment,<br/>progress updates" --> SF
     RT -- "fetch_url" --> WEB
+    EV -- "check / delete" --> KQ ==> IX
+    IX -- "summarise, embed" --> BRK
+    IX -- "Put / Delete" --> VEC
+    RT -- "search_past_threads" --> VEC
 
     WK -. "pending record" .-> PA
     WK -. "private connect link" .-> U
@@ -306,7 +392,7 @@ flowchart LR
     classDef ext fill:#eceff1,stroke:#455a64,color:#1a1a1a
 ```
 
-Not drawn, because everything uses them: **Secrets Manager** holds the Slack bot token and signing secret, read by all three Lambdas and the agent. **ECR** holds the Lambda and agent images.
+Not drawn, because everything uses them: **Secrets Manager** holds the Slack bot token and signing secret, read by all the Lambdas and the agent. The daily **EventBridge** rule that runs the knowledge sweep isn't drawn either. **ECR** holds the Lambda and agent images.
 
 | Component | Source | Purpose |
 |---|---|---|
@@ -314,6 +400,8 @@ Not drawn, because everything uses them: **Secrets Manager** holds the Slack bot
 | `agent-worker` Lambda | [handlers/agent_worker.py](../backends/lambdas/src/slack_app/handlers/agent_worker.py) | Reads the Slack thread ([thread_history.py](../backends/lambdas/src/slack_app/thread_history.py)). For triage jobs, asks Claude Haiku ([triage.py](../backends/lambdas/src/slack_app/triage.py)) to reply, react, correct or ignore. To reply, it invokes the Runtime **as the Slack user** with the thread attached, then posts the answer or a private "Connect …" link and swaps the reaction for the outcome (💬, 🔒 or ⚠️). |
 | `oauth-callback` Lambda | [handlers/oauth_callback.py](../backends/lambdas/src/slack_app/handlers/oauth_callback.py) | Binds the OAuth session to the user's browser and completes consent. `pending.cimd` decides whether AWS finishes the exchange (AgentCore Identity) or this Lambda does (CIMD). Re-queues the original question, and serves the CIMD client metadata document. |
 | `engaged-threads` table | [engaged_threads.py](../backends/lambdas/src/slack_app/engaged_threads.py) | Threads the bot has posted in, so follow-ups there are triaged towards a reply. Expires after 7 days of silence from the bot. |
+| `knowledge-indexer` Lambda (optional) | [handlers/knowledge_indexer.py](../backends/lambdas/src/slack_app/handlers/knowledge_indexer.py) | Runs `check`, `delete_thread` and `delete_channel` jobs from the `knowledge-index` queue, and the daily sweep. Re-reads the thread, summarises it ([knowledge/](../backends/lambdas/src/slack_app/knowledge/)) and writes it to S3 Vectors. Failures are retried, then go to the DLQ. They never touch the answer path. See [2d](#2d-team-knowledge-memory-optional). |
+| S3 Vectors index (optional) | [knowledge.tf](../infra-as-code/tf-app/knowledge.tf), [store.py](../backends/lambdas/src/slack_app/knowledge/store.py) | One index, 1024 dimensions, cosine. Filterable metadata: `team_id`, `channel_id`, `thread_key`, `visibility`, `updated_at`, `status`, `schema_version`. Non-filterable: `summary`, `permalink`, `channel_name`, `participants`, `last_message_ts`. |
 | `pending-oauth` table | [pending_auth.py](../backends/lambdas/src/slack_app/pending_auth.py) | One record per Connect link: nonce, Slack user, provider, session or CIMD handoff, and the job to resume. Single use, 10-minute TTL. |
 | Agent entry point | [main.py](../backends/agents/slack_agent/src/main.py) | Builds the prompt from the thread ([thread_prompt.py](../backends/agents/slack_agent/src/thread_prompt.py)), wires the tools, and posts live per-tool progress ([slack_progress.py](../backends/agents/slack_agent/src/slack_progress.py)). |
 | Agent — LinkedIn tool | [linkedin.py](../backends/agents/slack_agent/src/linkedin.py) | `get_my_linkedin_profile`: fetches the vaulted token, calls LinkedIn's REST API directly and returns JSON. |
@@ -322,6 +410,7 @@ Not drawn, because everything uses them: **Secrets Manager** holds the Slack bot
 | CIMD client document | [cimd_client.py](../backends/lambdas/src/slack_app/cimd_client.py) | Serves `/oauth2/client-metadata.json` (the app's OAuth `client_id`) and exchanges the authorization code for tokens. No client secret exists anywhere in this path. |
 | Agent — attachments | [attachments.py](../backends/agents/slack_agent/src/attachments.py), [slack_files.py](../backends/agents/slack_agent/src/slack_files.py), [content_blocks.py](../backends/agents/slack_agent/src/content_blocks.py) | Opens files on the new message and sends them as Converse `image`/`document` blocks. `read_attachment(file_id)` opens an earlier file, but only one the worker listed. The bot token is sent only to `files.slack.com`. |
 | Agent — links | [web_fetch.py](../backends/agents/slack_agent/src/web_fetch.py) | `fetch_url(url)`: reads a public page or PDF. Checks every hop against private, loopback, link-local and metadata addresses, and hands GitHub, Linear and Notion links to their own tools. |
+| Agent — past threads (optional) | [past_threads.py](../backends/agents/slack_agent/src/past_threads.py) | `search_past_threads(query)`: registered only when the worker sends a `knowledge` scope. Builds the `QueryVectors` filter from it and returns at most 5 threads as untrusted `<past_thread>` data. |
 | Agent — shared state | [auth_state.py](../backends/agents/slack_agent/src/auth_state.py) | `AuthState`: the side channel every tool writes to when consent is needed. |
 | GitHub remote MCP server | External (owned by GitHub) | GitHub's hosted MCP server, authenticated per request by the user's own vaulted token. No AgentCore Gateway involved. |
 | Infrastructure | [infra-as-code/tf-app](../infra-as-code/tf-app) | Terraform for all of the above, including the IAM allow-list for every configured model ([locals.tf](../infra-as-code/tf-app/locals.tf)). |
@@ -563,6 +652,59 @@ sequenceDiagram
 
 The outer agent never sees GitHub's MCP tool schemas, only `use_github(request)` and its text result. The nested agent is created per call and discarded when the tool returns, so nothing about it is kept between Slack messages.
 
+### Sequence: a thread gets remembered, then found from another channel
+
+```mermaid
+sequenceDiagram
+    autonumber
+    box rgba(106,27,154,0.10) Slack
+        actor P as People in #platform
+        actor D as Dave in #infra
+        participant S as Slack
+    end
+    box rgba(230,81,0,0.10) AWS Lambda + SQS
+        participant E as λ slack-events
+        participant KQ as SQS knowledge-index
+        participant X as λ knowledge-indexer
+        participant W as λ agent-worker
+    end
+    box rgba(21,101,192,0.10) Store
+        participant V as S3 Vectors
+    end
+    box rgba(0,105,92,0.10) AgentCore
+        participant R as Runtime agent
+    end
+    box rgba(173,20,87,0.10) Bedrock
+        participant M as Claude Haiku · Titan
+    end
+
+    P->>S: "Staging deploy fails with ECR throttling" + 4 replies
+    S->>E: message events
+    E->>KQ: check (IDs only), DelaySeconds=600, per message
+    Note over KQ,X: 10 minutes later, one check per message
+    KQ->>X: check
+    X->>S: conversations.info (internal? public?) + conversations.replies
+    Note over X: a newer message exists → skip (all but the last check)
+    X->>M: summarise (thread as quoted data)
+    M-->>X: PROBLEM · SOLUTION · STATUS · … or SKIP
+    X->>M: embed summary + side points (Titan)
+    X->>V: PutVectors T:C:ts#main, #side-1…
+    Note over D: a month later
+    D->>S: "@bot staging deploy is failing with ECR throttling"
+    S->>E: app_mention
+    E->>W: job (as for any @mention)
+    W->>S: conversations.info + guest check
+    W->>R: InvokeAgentRuntime + knowledge {scope: "public", ...}
+    R->>M: model decides to call search_past_threads
+    R->>M: embed the query (Titan)
+    R->>V: QueryVectors (filter: team, visibility = public, not this thread)
+    V-->>R: closest vectors + metadata
+    R->>M: up to 5 threads (channel, date, people, link), as untrusted data
+    M-->>R: "In #platform on 12 Sep, Carol fixed this by raising the quota…"
+    R-->>W: answer
+    W->>D: chat.update
+```
+
 ### Consent: AgentCore Identity vs CIMD
 
 Linear and Notion follow the same Slack-side steps (private link, single-use nonce, cookie binding, confirmation page, resume) with the OAuth client role moved from AWS to this app:
@@ -615,6 +757,7 @@ flowchart LR
 | DynamoDB cimd-tokens | The real dev table, or CIMD is off | The agent and the handlers are separate pods, so an in-memory store could not be shared. Empty `CIMD_TOKEN_TABLE` unregisters the CIMD tools. |
 | Runtime mints the workload token from `runtimeUserId` | Agent calls `GetWorkloadAccessTokenForUserId` on `slack-agent-local` | There is no Runtime locally. |
 | Slack Web API | Logged only when `SLACK_DRY_RUN=true` | Lets you work without a Slack workspace. |
+| S3 Vectors, knowledge-index queue | The real dev bucket, or knowledge is off | S3 Vectors has no emulator. With `KNOWLEDGE_ENABLED=true` and `KNOWLEDGE_VECTOR_BUCKET` set, a timer runs the indexer in the `slack-app` pod after `KNOWLEDGE_QUIET_SECONDS` (30 by default locally). |
 
 ## Design choices
 
@@ -624,7 +767,9 @@ flowchart LR
 - **A nested agent, not a top-level tool list, for GitHub.** Loading dozens of verbose MCP schemas into the main agent would cost a token-vault round trip and a schema dump on *every* Slack message. The main agent sees one lazy tool, `use_github(request)`, and only pays that cost when someone asks a GitHub question.
 - **CIMD instead of AgentCore Identity for Linear and Notion.** A constraint, not a preference. AgentCore's custom OAuth2 credential providers authenticate with `CLIENT_SECRET_BASIC`/`POST`, `AWS_IAM_ID_TOKEN_JWT` or `PRIVATE_KEY_JWT`. The CIMD draft forbids shared secrets, and these servers advertise only `none` (public client + PKCE), so none of the four fits. The alternative was deprecated Dynamic Client Registration. The cost is owning the token vault. The benefit is that the next such server needs no registration, no secret and no infrastructure change. See [cimd-providers.md](cimd-providers.md).
 - **One generic CIMD implementation, not one integration per vendor.** Discovery, PKCE, refresh, the token store and the tool wrapper are provider-agnostic. Everything vendor-specific lives in one registry file.
-- **No AgentCore Memory.** Each Runtime session is a microVM that lives until it idles out (`idle_session_timeout_seconds = 300`) or hits its cap (`max_session_lifetime_seconds = 3600`), see [agent-runtime.tf](../infra-as-code/tf-app/agent-runtime.tf). Nothing is remembered between requests: the worker reads the Slack thread (first message plus the latest 30) and sends it every time, so a follow-up after the session idles out, or from someone else in the thread, has the same context. The thread goes into the prompt as delimited data, so other people's text can inform an answer but can't trigger a tool call on the requester's accounts. See [thread_prompt.py](../backends/agents/slack_agent/src/thread_prompt.py).
+- **No AgentCore Memory.** Each Runtime session is a microVM that lives until it idles out (`idle_session_timeout_seconds = 300`) or hits its cap (`max_session_lifetime_seconds = 3600`), see [agent-runtime.tf](../infra-as-code/tf-app/agent-runtime.tf). Nothing is remembered between requests: the worker reads the Slack thread (first message plus the latest 30) and sends it every time, so a follow-up after the session idles out, or from someone else in the thread, has the same context. The thread goes into the prompt as delimited data, so other people's text can inform an answer but can't trigger a tool call on the requester's accounts. See [thread_prompt.py](../backends/agents/slack_agent/src/thread_prompt.py). Team knowledge ([2d](#2d-team-knowledge-memory-optional)) doesn't change this: it is what other threads concluded, searched on demand, not a conversation history.
 - **References, not bytes, for files.** Downloading in the Lambdas would spend the 3-second budget, overflow the 256 KB SQS limit, and send images to triage for nothing. The agent downloads with the bot token it already holds for progress updates, keeps the bytes in memory for one invocation, and can only open file IDs from the thread the worker read.
-- **One Lambda image, three handlers.** A single build is shared, and `image_config.command` selects the handler. The same code runs locally.
+- **S3 Vectors directly, not a Bedrock Knowledge Base, for team knowledge.** A thread summary is short and self-contained, so chunking and a managed ingestion pipeline would add little. `PutVectors` and `DeleteVectors` on stable keys (`team:channel:thread_ts#main`, `#side-n`) make overwriting a re-summarised thread and deleting a thread or channel exact. Per-user memory across conversations would be AgentCore Memory's job, and is out of scope.
+- **Summarise on quiet, not on every message.** Each message queues a check 10 minutes out, and a check that sees a newer person's message skips. So a burst of messages costs one summary call, and all the Slack reads, model calls and vector writes happen in the indexer, outside `slack-events`' 3-second budget.
+- **One Lambda image, four handlers.** A single build is shared, and `image_config.command` selects the handler. The same code runs locally.
 - **Claude Haiku 4.5 throughout, configured per job.** `MODEL_ID` (chat loop), `TRIAGE_MODEL_ID` (the worker's reply/react/correct/ignore decision), `GITHUB_MODEL_ID` and `CIMD_MODEL_ID` (nested agents) all default to `us.anthropic.claude-haiku-4-5-20251001-v1:0`. Nova Micro used to drive the chat loop, but it couldn't reliably weigh a whole thread and hit `MaxTokensReachedException` chaining GitHub's large tool catalogue. Nested agents get 4096 output tokens, the chat loop 1024. The IAM policies allow-list every configured model's inference-profile and foundation-model ARNs, see [locals.tf](../infra-as-code/tf-app/locals.tf).

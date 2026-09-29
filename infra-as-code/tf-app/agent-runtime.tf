@@ -28,7 +28,7 @@ module "agent_runtime" {
   max_session_lifetime_seconds     = 3600
 
   # CIMD providers keep their tokens in our own table, so the runtime needs access to it.
-  additional_policy_statements = [
+  additional_policy_statements = concat([
     {
       Sid    = "CimdTokenVault"
       Effect = "Allow"
@@ -38,9 +38,9 @@ module "agent_runtime" {
       Resource = aws_dynamodb_table.cimd_tokens.arn
     },
     merge({ Sid = "ReadSlackBotToken" }, local.read_slack_secret),
-  ]
+  ], local.knowledge_agent_statements)
 
-  environment_variables = {
+  environment_variables = merge({
     LOG_LEVEL              = var.log_level
     MODEL_ID               = var.model_id
     GITHUB_MODEL_ID        = var.github_model_id
@@ -58,5 +58,6 @@ module "agent_runtime" {
     CIMD_TOKEN_TABLE         = aws_dynamodb_table.cimd_tokens.name
     CIMD_MODEL_ID            = var.cimd_model_id
     CIMD_CONNECTION_TTL_DAYS = var.cimd_connection_ttl_days
-  }
+    # Team knowledge: search_past_threads reads the index; empty without knowledge_enabled.
+  }, local.knowledge_agent_env)
 }

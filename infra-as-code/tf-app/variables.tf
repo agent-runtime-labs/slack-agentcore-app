@@ -71,6 +71,35 @@ variable "cimd_connection_ttl_days" {
   default     = 90
 }
 
+variable "knowledge_enabled" {
+  type        = bool
+  description = <<-EOT
+    Team knowledge memory: summarise the threads in the internal channels the bot is in
+    (S3 Vectors) and give the agent a search_past_threads tool to find and cite them.
+    Needs the channels:read, groups:read and users:read scopes and the channel_left and
+    group_left events (docs/slack-setup.md). Off leaves the app exactly as without it.
+  EOT
+  default     = false
+}
+
+variable "knowledge_summary_model_id" {
+  type        = string
+  description = "Bedrock model the knowledge indexer summarises each quiet thread with (one call per thread)."
+  default     = "us.anthropic.claude-haiku-4-5-20251001-v1:0"
+}
+
+variable "knowledge_embedding_model_id" {
+  type        = string
+  description = "Embedding model for summaries and search queries. The index is 1024-dimensional, so it must produce that (Titan Text Embeddings v2 does)."
+  default     = "amazon.titan-embed-text-v2:0"
+}
+
+variable "knowledge_excluded_channels" {
+  type        = list(string)
+  description = "Channel IDs never indexed, e.g. [\"C0123ABCD\"]. Vectors already stored for them go at the next daily sweep."
+  default     = []
+}
+
 variable "log_level" {
   type    = string
   default = "INFO"

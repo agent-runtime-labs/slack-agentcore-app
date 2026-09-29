@@ -19,7 +19,7 @@ locals {
   # Haiku), so all of them need to be allow-listed for the runtime's InvokeModel permission.
   bedrock_model_ids = distinct([var.model_id, var.github_model_id, var.cimd_model_id])
   model_arns_by_id = {
-    for model_id in distinct(concat(local.bedrock_model_ids, [var.triage_model_id])) : model_id => [
+    for model_id in distinct(concat(local.bedrock_model_ids, [var.triage_model_id, var.knowledge_summary_model_id])) : model_id => [
       "arn:aws:bedrock:${var.region}:${local.account_id}:inference-profile/${model_id}",
       # Cross-region inference profiles route to the model in several regions.
       # us.amazon.nova-micro-v1:0 -> amazon.nova-micro-v1:0

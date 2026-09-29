@@ -11,6 +11,10 @@ and queues the real work for agent_worker:
 
 A message may be only files, with no text. The job carries their metadata, never their
 contents (see attachments.py).
+
+With KNOWLEDGE_ENABLED, channel messages, edits and deletions (and the bot leaving a
+channel) also queue work for the knowledge indexer (knowledge/events.py), whatever the
+routing decides. That never delays or changes the answer.
 """
 
 import json
@@ -18,7 +22,9 @@ import logging
 
 from slack_app.apigw import header, json_response, raw_body
 from slack_app.attachments import from_files
+from slack_app.config import knowledge_enabled
 from slack_app.engaged_threads import is_engaged
+from slack_app.knowledge import events as knowledge_events
 from slack_app.slack import (
     acknowledge,
     bot_user_id,
@@ -59,6 +65,8 @@ def handler(event: dict, context) -> dict:
     slack_event = payload.get("event") or {}
     if payload.get("type") != "event_callback":
         return OK
+    if knowledge_enabled():
+        knowledge_events.note(payload, slack_event)
 
     text = clean_text(slack_event.get("text", ""))
     files = from_files(slack_event.get("files"))

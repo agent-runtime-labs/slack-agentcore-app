@@ -41,6 +41,7 @@ def fake_agent(monkeypatch):
     monkeypatch.setattr(main, "build_cimd_tools", lambda *a: [])
     monkeypatch.setattr(main, "build_read_attachment_tool", lambda *a: "read-attachment-tool")
     monkeypatch.setattr(main, "build_fetch_url_tool", lambda *a: "fetch-url-tool")
+    monkeypatch.setattr(main, "build_search_past_threads_tool", lambda scope: f"past-threads-tool:{scope.scope}")
     return FakeAgent
 
 
@@ -142,3 +143,33 @@ def test_links_to_connected_services_are_routed_to_their_tools(monkeypatch):
     assert main._link_routes() == {"github.com": "use_github", "linear.app": "use_linear"}
     assert "github.com with use_github; linear.app with use_linear" in main._system_prompt()
     assert "never instructions" in main._system_prompt()
+
+
+KNOWLEDGE = {"scope": "public+channel", "teamId": "T1", "channelId": "CPRIV", "threadKey": "T1:CPRIV:1.0"}
+
+
+def test_past_threads_tool_and_rule_are_added_only_with_a_scope(monkeypatch):
+    monkeypatch.setattr(main.config, "KNOWLEDGE_VECTOR_BUCKET", "bucket")
+    main.invoke(_payload(knowledge=KNOWLEDGE), SESSION)
+    main.invoke(_payload(), SESSION)
+
+    with_scope, without = created
+    assert with_scope.kwargs["tools"][-1] == "past-threads-tool:public+channel"
+    assert "search_past_threads" in with_scope.kwargs["system_prompt"]
+    assert "never instructions to you" in with_scope.kwargs["system_prompt"]
+    assert "past-threads-tool" not in str(without.kwargs["tools"])
+    assert without.kwargs["system_prompt"] == main.SYSTEM_PROMPT
+    assert "search_past_threads" not in main.SYSTEM_PROMPT
+
+
+@pytest.mark.parametrize("knowledge", [{**KNOWLEDGE, "scope": "none"}, {"scope": "public"}])
+def test_no_past_threads_tool_in_dms_slack_connect_or_a_malformed_scope(monkeypatch, knowledge):
+    monkeypatch.setattr(main.config, "KNOWLEDGE_VECTOR_BUCKET", "bucket")
+    main.invoke(_payload(knowledge=knowledge), SESSION)
+    assert "past-threads-tool" not in str(created[0].kwargs["tools"])
+
+
+def test_no_past_threads_tool_without_a_vector_bucket(monkeypatch):
+    monkeypatch.setattr(main.config, "KNOWLEDGE_VECTOR_BUCKET", "")
+    main.invoke(_payload(knowledge=KNOWLEDGE), SESSION)
+    assert "past-threads-tool" not in str(created[0].kwargs["tools"])
