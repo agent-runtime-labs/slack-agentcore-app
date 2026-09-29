@@ -111,7 +111,9 @@ local_resource(
         UV + '--with pytest pytest -q scripts/tests',
     # Same suites as `make test` (scripts/tests/test_dev_loop_parity.py keeps them in step).
     deps=['backends/lambdas/src', 'backends/lambdas/tests', 'backends/agents/slack_agent/src', 'backends/agents/slack_agent/tests',
-          'scripts', 'dream.config.json', 'docs/dream-cycle/LEDGER.md', 'Makefile'],
+          'scripts', 'dream.config.json', 'docs/dream-cycle/LEDGER.md', 'Makefile',
+          # scripts/tests/test_timeout_budget.py reads the worker and queue timeouts from here.
+          'infra-as-code/tf-app'],
     labels=['test'],
 )
 
