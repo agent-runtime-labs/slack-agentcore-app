@@ -1,4 +1,4 @@
-# One image, three Lambda handlers (selected via image_config.command in Terraform).
+# One image, four Lambda handlers (selected via image_config.command in Terraform).
 #   target "lambda"   -> pushed to ECR and used by AWS Lambda (arm64)
 #   target "localdev" -> used by Tilt; runs the handlers behind a local FastAPI server
 ARG PYTHON_VERSION=3.13

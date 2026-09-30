@@ -22,6 +22,12 @@ AWS account requirements:
     --messages '[{"role":"user","content":[{"text":"Say OK"}]}]' \
     --query 'output.message.content[0].text' --output text
   ```
+- For team knowledge memory (`knowledge_enabled`), model access to **Claude Sonnet 5.5**, which summarises threads. Without it the indexer falls back to Haiku 4.5 and logs a warning. Check with:
+  ```bash
+  aws bedrock-runtime invoke-model --model-id global.anthropic.claude-sonnet-5-5 --cli-binary-format raw-in-base64-out \
+    --body '{"anthropic_version":"bedrock-2023-05-31","max_tokens":64,"messages":[{"role":"user","content":"Say OK"}]}' \
+    /dev/stdout
+  ```
 - Permissions to call `bedrock:InvokeModel` and `bedrock-agentcore:*` (Identity APIs). An admin profile is fine for a sandbox.
 
 ## 2. Configure

@@ -19,21 +19,24 @@ The manifest configures:
 |---|---|---|
 | Bot scopes | `app_mentions:read` | Receive `@bot` mentions in channels. |
 | | `channels:history`, `groups:history` | Read messages in public/private channels the bot is in, so it can reply [without an @mention](#replying-without-an-mention). |
+| | `channels:read`, `groups:read` | `conversations.info` and `conversations.members` for public/private channels: is a channel internal or Slack Connect, public or private, and who's in it. Used only by [team knowledge](#team-knowledge-optional). |
 | | `chat:write` | Post the placeholder, update it, and send ephemeral connect links. |
 | | `files:read` | Download the files people attach, so the bot can read them. See [Files and links](#files-and-links). |
 | | `im:history`, `im:read`, `im:write` | Receive and answer direct messages. |
 | | `reactions:write` | React to the user's message (👀 then 💬/⚠️/🔒) while it's being handled. |
+| | `users:read` | `users.info`, to check whether a channel has guests before searching earlier threads. Used only by [team knowledge](#team-knowledge-optional). |
 | Bot events | `app_mention`, `message.im` | @mentions and direct messages: always answered. |
-| | `message.channels`, `message.groups` | Every other channel message: answered only if it's meant for the bot. |
+| | `message.channels`, `message.groups` | Every other channel message: answered only if it's meant for the bot. With team knowledge on, also edits and deletions, which update the stored summaries. |
+| | `channel_left`, `group_left` | The bot was removed from a public/private channel: its stored summaries are deleted. Used only by team knowledge. |
 | App Home | Messages tab enabled, not read-only | Lets users DM the bot. |
 
 <details>
 <summary>Prefer clicking through the UI?</summary>
 
 1. **Create New App → From scratch**, then name it and pick a workspace.
-2. **OAuth & Permissions → Bot Token Scopes**: add the nine scopes above.
+2. **OAuth & Permissions → Bot Token Scopes**: add the twelve scopes above.
 3. **App Home**: enable the *Messages Tab*, and tick *Allow users to send Slash commands and messages from the messages tab*.
-4. **Event Subscriptions**: turn it on, set the Request URL, and add the bot events `app_mention`, `message.channels`, `message.groups` and `message.im`.
+4. **Event Subscriptions**: turn it on, set the Request URL, and add the bot events `app_mention`, `channel_left`, `group_left`, `message.channels`, `message.groups` and `message.im`.
 </details>
 
 ## 2. Install and collect the credentials
@@ -128,6 +131,22 @@ Only files on the message the bot is answering are read up front. For a file pos
 **Upgrading an existing app:** `files:read` is new. Add it under **OAuth & Permissions → Bot Token Scopes**, click **Reinstall to Workspace**, and store the bot token again (`put-slack-secret.sh`, or `.env` locally). Until then, the bot answers files with "this app isn't allowed to read files yet".
 
 Files and pages are read in memory for one answer and never stored. Their contents are treated as information, never as instructions: a document that says "open a GitHub issue" doesn't make the bot do it.
+
+## Team knowledge (optional)
+
+With `knowledge_enabled = true` in Terraform (`KNOWLEDGE_ENABLED`), the bot remembers what was worked out in earlier threads, and can find and cite them when the question comes back:
+
+> In #platform on 12 Sep, Carol fixed this by raising the ECR pull-through cache quota ([thread](https://…)). Bob was going to add an alarm for it.
+
+- **What's indexed:** every thread in the public and private channels the bot is in, once it has been quiet for 10 minutes, and again when it's picked up. Chit-chat is skipped. DMs, group DMs and Slack Connect channels never are. To leave a channel out, add its ID to `knowledge_excluded_channels`.
+- **Where it can be found:** public threads from any channel without guests. A private channel's threads only from that same channel. In a channel with a guest, only that channel's own threads. Never in DMs or Slack Connect channels.
+- **When it's used:** the bot searches when someone asks "has this happened before?", "how do we…?" or "what did we decide about…?". It doesn't search on every message.
+- **Keeping it current:** edits and deleted replies re-summarise the thread, and deleting a thread's first message removes it. Removing the bot from a channel removes that channel's threads, and a daily sweep catches channels that became Slack Connect or switched between public and private.
+- Only threads active after the bot joined a channel, and after the feature was switched on, are indexed. There's no backfill.
+
+**Turning it on for an existing app:** add the `channels:read`, `groups:read` and `users:read` scopes and the `channel_left` and `group_left` bot events (or paste the updated [manifest](slack-app-manifest.yaml)), click **Reinstall to Workspace**, store the bot token again (`put-slack-secret.sh`), then set `knowledge_enabled = true` and `make deploy`. Without the scopes, the indexer can't confirm what kind of channel a thread is in, so it indexes nothing, and the bot answers without earlier threads.
+
+See [architecture.md](architecture.md#2d-team-knowledge-memory-optional) for how it works and [identity-and-security.md](identity-and-security.md#team-knowledge-what-one-thread-can-show-in-another) for the access rules.
 
 ## Behaviour notes
 

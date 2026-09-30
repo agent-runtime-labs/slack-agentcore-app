@@ -33,6 +33,16 @@ def assistant_name() -> str:
     return os.getenv("ASSISTANT_NAME", "AgentCore Assistant")
 
 
+def knowledge_enabled() -> bool:
+    """Team knowledge memory (knowledge/): index channel threads and let the agent search them. Off by default."""
+    return os.getenv("KNOWLEDGE_ENABLED", "false").lower() == "true"
+
+
+def knowledge_excluded_channels() -> set[str]:
+    """Channel IDs that are never indexed (KNOWLEDGE_EXCLUDED_CHANNELS, comma-separated)."""
+    return {channel.strip() for channel in os.getenv("KNOWLEDGE_EXCLUDED_CHANNELS", "").split(",") if channel.strip()}
+
+
 def public_base_url() -> str:
     """Base URL users' browsers use to reach the OAuth endpoints (API Gateway or localhost)."""
     return os.environ["PUBLIC_BASE_URL"].rstrip("/")

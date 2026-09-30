@@ -19,6 +19,10 @@ When a tool needs the user to connect an account, the job is saved with the priv
 connect link (pending_auth.py). Once they connect, the OAuth callback queues it again
 with RESUMED_AFTER_AUTH set, and the answer replaces the "I need access" message: the
 user never has to ask the same question twice.
+
+With KNOWLEDGE_ENABLED, the agent also gets the scope its search_past_threads tool may
+search from this channel (knowledge/scope.py). Working it out never fails an answer: at
+worst the tool is left out.
 """
 
 import json
@@ -28,8 +32,9 @@ import time
 
 from slack_app.agent_client import MODE_CORRECT, invoke_agent
 from slack_app.attachments import from_files
-from slack_app.config import public_base_url
+from slack_app.config import knowledge_enabled, public_base_url
 from slack_app.identity import runtime_session_id, runtime_user_id
+from slack_app.knowledge.scope import search_scope
 from slack_app.pending_auth import TTL_SECONDS, PendingAuth, new_nonce, pending_auth_store
 from slack_app.slack import (
     REACTION_ACK,
@@ -91,6 +96,7 @@ def process(job: dict) -> None:
 
     user_id = runtime_user_id(job["team_id"], job["user"])
     session_id = runtime_session_id(job["team_id"], job["channel"], job["thread_ts"], job["user"])
+    knowledge = _knowledge_scope(slack, job)
 
     timer = threading.Timer(INTERIM_DELAY_SECONDS, _interim_update, args=(slack, job))
     timer.daemon = True
@@ -105,6 +111,7 @@ def process(job: dict) -> None:
             thread=[message.as_dict() for message in thread.history],
             requester=requester,
             files=[file.as_dict() for file in files],
+            **({"knowledge": knowledge} if knowledge else {}),
         )
     except Exception:
         # Don't re-raise: an SQS retry would run the agent again and double-post.
@@ -135,6 +142,17 @@ def _read_thread(slack, job: dict) -> Thread:
     if not job.get("user_message_ts"):
         return Thread(history=[])  # queued before jobs carried the message's own ts
     return read_thread(slack, job["channel"], job["thread_ts"], job["user_message_ts"], bot_user_id({}))
+
+
+def _knowledge_scope(slack, job: dict) -> dict | None:
+    """Which past threads the agent may search from here, or None to leave the tool out."""
+    if not knowledge_enabled():
+        return None
+    try:
+        return search_scope(slack, job["team_id"], job["channel"], job["thread_ts"])
+    except Exception:
+        logger.warning("Couldn't work out the past-threads scope; answering without it", exc_info=True)
+        return None
 
 
 def _correct(slack, job: dict, prompt: str, requester: str, thread: Thread) -> None:

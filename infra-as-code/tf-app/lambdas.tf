@@ -1,5 +1,5 @@
 ################################################################################
-# Lambda functions (one image, three handlers)
+# Lambda functions (one image, four handlers; the fourth, knowledge-indexer, is in knowledge.tf)
 ################################################################################
 
 module "lambda_image" {
@@ -39,11 +39,11 @@ module "slack_events_fn" {
   environment_variables = merge(local.lambda_common_env, {
     PROCESSING_QUEUE_URL  = aws_sqs_queue.processing.url
     ENGAGED_THREADS_TABLE = aws_dynamodb_table.engaged_threads.name
-  })
+  }, local.knowledge_events_env)
 
   policy_json = jsonencode({
     Version = "2012-10-17"
-    Statement = [
+    Statement = concat([
       local.read_slack_secret,
       {
         Effect   = "Allow"
@@ -55,7 +55,7 @@ module "slack_events_fn" {
         Action   = ["dynamodb:GetItem", "dynamodb:PutItem"]
         Resource = aws_dynamodb_table.engaged_threads.arn
       },
-    ]
+    ], local.knowledge_events_statements)
   })
 }
 
@@ -77,7 +77,9 @@ module "agent_worker_fn" {
     PUBLIC_BASE_URL       = local.public_base_url
     # Decides whether a channel message without an @mention is meant for the bot.
     TRIAGE_MODEL_ID = var.triage_model_id
-  })
+    # With team knowledge on, works out which past threads the agent may search from the
+    # channel (Slack API only: conversations.info, conversations.members, users.info).
+  }, local.knowledge_worker_env)
 
   policy_json = jsonencode({
     Version = "2012-10-17"
