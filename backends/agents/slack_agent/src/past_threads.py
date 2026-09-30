@@ -40,7 +40,7 @@ CHANNEL_ONLY = "channel"
 _SCOPES = {PUBLIC_ONLY, PUBLIC_AND_CHANNEL, CHANNEL_ONLY}
 
 MAX_RESULTS = 5
-# Side points share their thread's key, so ask for more than we return and collapse.
+# A thread has a vector per problem and per learning, so ask for more than we return and collapse.
 TOP_K = 20
 MAX_QUERY_CHARS = 1000
 MAX_SUMMARY_CHARS = 4000

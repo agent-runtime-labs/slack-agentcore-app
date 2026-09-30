@@ -5,7 +5,9 @@ EventBridge schedule with {"sweep": true}. It is separate from the answer path: 
 here can delay or change a reply, and a failed job is retried, then parked in the DLQ.
 
 A CHECK re-reads the whole thread from Slack and, unless a newer message will do it,
-asks the model for a summary (knowledge/summary.py) and overwrites the thread's vectors.
+asks the model for a summary (knowledge/summary.py) and overwrites the thread's vectors:
+one per problem the thread worked on and one per learning raised along the way, each
+embedded from its own text and carrying the whole summary for the agent to cite.
 It only ever reads the Slack thread: tool output from people's own accounts is never in
 it, beyond what the bot chose to post.
 
@@ -22,7 +24,16 @@ from decimal import Decimal
 
 from slack_app.config import knowledge_excluded_channels
 from slack_app.engaged_threads import thread_key
-from slack_app.knowledge import CHECK, DELETE_CHANNEL, DELETE_THREAD, MAIN, SCHEMA_VERSION, channel_of, vector_keys
+from slack_app.knowledge import (
+    CHECK,
+    DELETE_CHANNEL,
+    DELETE_THREAD,
+    SCHEMA_VERSION,
+    channel_of,
+    learning_key,
+    problem_key,
+    vector_keys,
+)
 from slack_app.knowledge.channels import ChannelUnknown, channel_info
 from slack_app.knowledge.embeddings import embed
 from slack_app.knowledge.store import knowledge_store
@@ -32,10 +43,11 @@ from slack_app.thread_history import read_whole_thread
 
 logger = logging.getLogger(__name__)
 
-# What the summary model is given at most. A longer thread is summarised from its stored
-# summary plus the messages since, or, when that isn't possible, its first message and
-# as many of the latest as fit.
-MAX_PROMPT_CHARS = 60_000
+# What the summary model is given at most (about 50,000 tokens). A longer thread is
+# summarised from its stored summary plus the messages since, or, when that isn't
+# possible, its first message and as many of the latest as fit. Kept generous: the fix
+# in a long incident thread is often in the middle.
+MAX_PROMPT_CHARS = 200_000
 MAX_PARTICIPANTS = 20
 
 _PERSON_SUBTYPES = {None, "file_share", "thread_broadcast", "me_message"}
@@ -100,9 +112,14 @@ def check(job: dict) -> str:
         return "superseded by a newer message"
 
     existing = store.get(vector_keys(key))
-    previous = (existing.get(f"{key}#{MAIN}") or {}).get("metadata") or {}
+    # Every vector of a thread carries the same summary and last_message_ts.
+    previous = next((vector["metadata"] for vector in existing.values() if vector.get("metadata")), {})
     last_ts = messages[-1][0]["ts"]
-    if not force and previous and Decimal(previous.get("last_message_ts") or "0") >= Decimal(last_ts):
+    if (
+        not force
+        and previous.get("schema_version") == SCHEMA_VERSION
+        and Decimal(previous.get("last_message_ts") or "0") >= Decimal(last_ts)
+    ):
         return "already up to date"
 
     lines, previous_summary, omitted = _prompt_lines(messages, previous, force)
@@ -122,6 +139,7 @@ def check(job: dict) -> str:
         "visibility": channel.visibility,
         "updated_at": int(time.time()),
         "status": summary.status,
+        "kind": summary.kind,
         "schema_version": SCHEMA_VERSION,
         "summary": summary.text,
         "permalink": _permalink(slack, channel.id, job["thread_ts"]),
@@ -131,10 +149,14 @@ def check(job: dict) -> str:
     }
     # Leave out empty values (a channel name Slack didn't give, no people left in a thread).
     metadata = {name: value for name, value in metadata.items() if value not in ("", [], None)}
-    texts = [summary.text, *summary.side_points]
+    # A problem's vector carries that problem's status, so a search that matches the open
+    # second problem of a thread doesn't report it as resolved.
     vectors = [
-        {"key": vector_key, "embedding": embed(text), "metadata": metadata}
-        for vector_key, text in zip(vector_keys(key), texts, strict=False)
+        {"key": problem_key(key, n), "embedding": embed(text), "metadata": {**metadata, "status": problem.status}}
+        for n, (problem, text) in enumerate(zip(summary.problems, summary.problem_texts(), strict=True), 1)
+    ] + [
+        {"key": learning_key(key, n), "embedding": embed(text), "metadata": metadata}
+        for n, text in enumerate(summary.learning_texts(), 1)
     ]
     store.put(vectors)
     stale = sorted(set(existing) - {vector["key"] for vector in vectors})

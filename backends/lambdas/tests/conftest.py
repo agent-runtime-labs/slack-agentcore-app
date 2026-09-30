@@ -31,6 +31,9 @@ def local_env(monkeypatch):
         "KNOWLEDGE_VECTOR_BUCKET",
         "KNOWLEDGE_EXCLUDED_CHANNELS",
         "KNOWLEDGE_QUIET_SECONDS",
+        "KNOWLEDGE_SUMMARY_MODEL_ID",
+        "KNOWLEDGE_SUMMARY_FALLBACK_MODEL_ID",
+        "KNOWLEDGE_SUMMARY_EFFORT",
     ):
         monkeypatch.delenv(name, raising=False)
 

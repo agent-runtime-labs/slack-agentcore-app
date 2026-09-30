@@ -1,10 +1,10 @@
 """The S3 Vectors index that holds thread summaries, used directly (no Knowledge Base).
 
 A summary is short and self-contained, so there is nothing to chunk: each thread has one
-vector for its summary and up to three for side points, on stable keys (see
-knowledge.vector_keys), so updating a thread overwrites it and deleting it is exact.
+vector per problem it worked on and one per learning (up to three each), on stable keys
+(see knowledge.vector_keys), so updating a thread overwrites it and deleting it is exact.
 
-Filterable metadata: team_id, channel_id, thread_key, visibility, updated_at, status,
+Filterable metadata: team_id, channel_id, thread_key, visibility, updated_at, status, kind,
 schema_version. Non-filterable (declared on the index in Terraform): summary, permalink,
 channel_name, participants, last_message_ts.
 """

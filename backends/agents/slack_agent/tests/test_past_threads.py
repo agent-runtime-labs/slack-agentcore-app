@@ -10,14 +10,16 @@ import past_threads  # noqa: E402
 from fake_s3vectors import FakeS3Vectors, fake_embedding  # noqa: E402
 from past_threads import Scope, build_search_past_threads_tool  # noqa: E402
 
-ECR = """PROBLEM: Staging deploy fails with ECR throttling TooManyRequestsException.
+ECR = """TITLE: Staging deploys fail with ECR throttling
+KIND: troubleshooting
+PROBLEM (resolved): Staging deploy fails with ECR throttling TooManyRequestsException.
 SOLUTION: Carol raised the ECR pull-through cache quota.
-STATUS: resolved
-SIDE POINTS:
+LEARNINGS:
 - The staging RDS certificate expires on 1 Oct and Dave will rotate it."""
-PAGER = """PROBLEM: Who is on call for the payments pager rotation this week?
-SOLUTION: Erin swaps with Frank on Thursday.
-STATUS: resolved"""
+PAGER = """TITLE: Payments pager rotation
+KIND: how-to
+PROBLEM (resolved): Who is on call for the payments pager rotation this week?
+SOLUTION: Erin swaps with Frank on Thursday."""
 
 
 @pytest.fixture
@@ -30,7 +32,7 @@ def index(monkeypatch):
     return fake
 
 
-def add(index, channel, thread_ts, summary, *, visibility="public", team="T1", side_points=(), name=None):
+def add(index, channel, thread_ts, summary, *, visibility="public", team="T1", learnings=(), name=None):
     thread_key = f"{team}:{channel}:{thread_ts}"
     metadata = {
         "team_id": team,
@@ -44,8 +46,9 @@ def add(index, channel, thread_ts, summary, *, visibility="public", team="T1", s
         "participants": ["Alice", "Carol"],
         "last_message_ts": thread_ts,
     }
-    texts = [summary, *side_points]
-    keys = [f"{thread_key}#main"] + [f"{thread_key}#side-{n}" for n in range(1, len(side_points) + 1)]
+    # Embedded from the whole summary here for simplicity; the indexer embeds each problem's own text.
+    texts = [summary, *learnings]
+    keys = [f"{thread_key}#problem-1"] + [f"{thread_key}#learning-{n}" for n in range(1, len(learnings) + 1)]
     index.put_vectors("bucket", "threads", [
         {"key": key, "data": {"float32": fake_embedding(text)}, "metadata": metadata} for key, text in zip(keys, texts, strict=True)
     ])  # fmt: skip
@@ -102,9 +105,9 @@ def test_the_thread_being_answered_is_left_out(index):
     assert ask("public", "CA", QUESTION, thread_ts="1757660400.000100") == past_threads.NOTHING
 
 
-def test_a_side_point_finds_the_thread_it_was_raised_in(index):
-    side_point = "The staging RDS certificate expires on 1 Oct and Dave will rotate it."
-    add(index, "CA", "1757660400.000100", ECR, side_points=[side_point])
+def test_a_learning_finds_the_thread_it_was_raised_in(index):
+    learning = "The staging RDS certificate expires on 1 Oct and Dave will rotate it."
+    add(index, "CA", "1757660400.000100", ECR, learnings=[learning])
     add(index, "CB", "1757660500.000100", PAGER)
 
     result = ask("public", "CC", "when does the staging RDS certificate expire?")
@@ -114,7 +117,7 @@ def test_a_side_point_finds_the_thread_it_was_raised_in(index):
 
 def test_results_are_collapsed_ranked_capped_and_thresholded(index, monkeypatch):
     for n in range(7):
-        add(index, "CA", f"175766{n}000.000100", ECR + f" Variant {n}.", side_points=[ECR])
+        add(index, "CA", f"175766{n}000.000100", ECR + f" Variant {n}.", learnings=[ECR])
     add(index, "CB", "1757660500.000100", PAGER)
 
     result = ask("public", "CC", QUESTION)

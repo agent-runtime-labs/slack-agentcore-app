@@ -73,8 +73,8 @@ resource "aws_s3vectors_index" "threads" {
   distance_metric    = "cosine"
 
   # Stored with each vector for citing a thread, never filtered on. Every other key
-  # (team_id, channel_id, thread_key, visibility, updated_at, status, schema_version)
-  # stays filterable.
+  # (team_id, channel_id, thread_key, visibility, updated_at, status, kind,
+  # schema_version) stays filterable.
   metadata_configuration {
     non_filterable_metadata_keys = ["summary", "permalink", "channel_name", "participants", "last_message_ts"]
   }
@@ -95,7 +95,7 @@ resource "aws_sqs_queue" "knowledge_index" {
 
   name = "${local.name_prefix}-knowledge-index"
   # Six times the indexer's timeout, as AWS recommends for Lambda consumers.
-  visibility_timeout_seconds = 1800
+  visibility_timeout_seconds = 3600
   message_retention_seconds  = 86400
   sqs_managed_sse_enabled    = true
 
@@ -113,16 +113,19 @@ module "knowledge_indexer_fn" {
   description = "Summarises quiet Slack threads into the team knowledge index, and sweeps it daily"
   image_uri   = module.lambda_image.image_uri
   command     = ["slack_app.handlers.knowledge_indexer.handler"]
-  timeout     = 300
+  # Up to 5 jobs a batch, each maybe a Sonnet call with thinking over a long thread, and
+  # the fallback model's call if Sonnet can't be used.
+  timeout     = 600
   memory_size = 512
 
   environment_variables = merge(local.lambda_common_env, {
-    KNOWLEDGE_ENABLED            = "true"
-    KNOWLEDGE_VECTOR_BUCKET      = local.knowledge_bucket
-    KNOWLEDGE_INDEX              = local.knowledge_index
-    KNOWLEDGE_SUMMARY_MODEL_ID   = var.knowledge_summary_model_id
-    KNOWLEDGE_EMBEDDING_MODEL_ID = var.knowledge_embedding_model_id
-    KNOWLEDGE_EXCLUDED_CHANNELS  = join(",", var.knowledge_excluded_channels)
+    KNOWLEDGE_ENABLED                   = "true"
+    KNOWLEDGE_VECTOR_BUCKET             = local.knowledge_bucket
+    KNOWLEDGE_INDEX                     = local.knowledge_index
+    KNOWLEDGE_SUMMARY_MODEL_ID          = var.knowledge_summary_model_id
+    KNOWLEDGE_SUMMARY_FALLBACK_MODEL_ID = var.knowledge_summary_fallback_model_id
+    KNOWLEDGE_EMBEDDING_MODEL_ID        = var.knowledge_embedding_model_id
+    KNOWLEDGE_EXCLUDED_CHANNELS         = join(",", var.knowledge_excluded_channels)
   })
 
   policy_json = jsonencode({
@@ -140,10 +143,15 @@ module "knowledge_indexer_fn" {
         Resource = local.knowledge_index_arn
       },
       {
-        # One summary call per quiet thread, then one Titan call per stored vector.
-        Effect   = "Allow"
-        Action   = ["bedrock:InvokeModel"]
-        Resource = concat(local.model_arns_by_id[var.knowledge_summary_model_id], [local.knowledge_embedding_model_arn])
+        # One summary call per quiet thread (the fallback model if the summary model can't
+        # be used), then one Titan call per stored vector.
+        Effect = "Allow"
+        Action = ["bedrock:InvokeModel"]
+        Resource = concat(
+          local.model_arns_by_id[var.knowledge_summary_model_id],
+          lookup(local.model_arns_by_id, var.knowledge_summary_fallback_model_id, []),
+          [local.knowledge_embedding_model_arn],
+        )
       },
     ]
   })

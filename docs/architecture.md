@@ -243,9 +243,9 @@ flowchart LR
     KQ[("SQS knowledge-index<br/>delay 10 min · DLQ")]:::data
     SCH["EventBridge<br/>daily sweep"]:::aws
     IX["λ knowledge-indexer<br/>re-read · summarise · upsert"]:::aws
-    SUM["Claude Haiku<br/>one summary per thread"]:::model
+    SUM["Claude Sonnet 5.5<br/>(Haiku 4.5 fallback)<br/>one summary per thread"]:::model
     TI["Titan Text<br/>Embeddings v2"]:::model
-    VEC[("S3 Vectors<br/>1024-d · cosine<br/>keys team:channel:ts#main / #side-n")]:::data
+    VEC[("S3 Vectors<br/>1024-d · cosine<br/>keys team:channel:ts#problem-n / #learning-n")]:::data
     WK["λ agent-worker<br/>works out the search scope"]:::aws
     RT["AgentCore Runtime<br/>search_past_threads"]:::agentcore
 
@@ -253,7 +253,7 @@ flowchart LR
     EV == "one SQS message,<br/>IDs only" ==> KQ ==> IX
     SCH --> IX
     IX -- "conversations.info<br/>conversations.replies" --> SLK
-    IX -- "Converse" --> SUM
+    IX -- "InvokeModel" --> SUM
     IX -- "embed" --> TI
     IX == "PutVectors / DeleteVectors" ==> VEC
     WK -- "conversations.info · members ·<br/>users.info (guest check)" --> SLK
@@ -291,7 +291,11 @@ Bot messages, including the bot's own answers, never queue a check but are part 
 next day Dave → check 10 min later → re-summarise → same keys, overwritten
 ```
 
-**The summary** ([summary.py](../backends/lambdas/src/slack_app/knowledge/summary.py)) is one model call (`knowledge_summary_model_id`, Claude Haiku 4.5 by default) with the thread quoted as data. It writes `PROBLEM`, `SOLUTION`, `STATUS`, `DECISIONS`, `SIDE POINTS`, `PEOPLE` and `LINKS`, or `SKIP` for chit-chat (then nothing is stored, and a stored summary is deleted). Only those fields are kept, each cut to a fixed length. The summary gets the key `team:channel:thread_ts#main`, and each side point (up to 3) gets `#side-1` to `#side-3`, so a question about something raised in passing still finds the thread. A thread too long for the prompt (60,000 characters) is summarised from its stored summary plus the messages since `last_message_ts`, except after an edit or a delete, which always start again from the thread.
+**The summary** ([summary.py](../backends/lambdas/src/slack_app/knowledge/summary.py)) is one `InvokeModel` call (`knowledge_summary_model_id`, Claude Sonnet 5.5 by default) with the thread quoted as data, one line per message with its time, attachments and emoji reactions (a ✅ often marks the fix). The prompt is written for how people talk in Slack. The solution is what someone confirmed worked, and failed attempts go in `tried`. "nvm, fixed it" and "let's hop on a call" are recorded as such, not guessed at. "It" and "yesterday" are spelled out. A hijacked thread ("also, anyone seeing X?") is split into separate problems. The assistant's own answers count only once a person confirmed them. Everything is written in English, whatever language the thread was in.
+
+The answer is JSON: a title, a kind, 1–3 **problems** (problem, solution, tried, confirmation, status, the questions someone would ask to find it, keywords), up to 3 standalone **learnings**, decisions, people and links. For chit-chat it is `SKIP` (then nothing is stored, and a stored summary is deleted). Only those fields are kept, each cut to a fixed length. Bedrock's newer Claude endpoint has no structured outputs, so the JSON is asked for in the prompt and parsed defensively.
+
+Each problem gets its own vector (`team:channel:thread_ts#problem-1` to `#problem-3`), embedded from only what a search would match: the problem, solution, questions and keywords. Field labels, people and links read the same in every summary and would blur them together, so they are left out. Each learning gets `#learning-1` to `#learning-3`, so a question about something raised in passing still finds the thread. Every vector carries the whole rendered summary for the agent to cite, and a problem's vector carries that problem's `status`. If the model declines a thread or can't be used (no model access yet, IAM), `knowledge_summary_fallback_model_id` (Claude Haiku 4.5) writes the summary instead. Threads summarised before schema 2 keep their `#main` and `#side-n` vectors until they are re-summarised, which removes them. A thread too long for the prompt (200,000 characters) is summarised from its stored summary plus the messages since `last_message_ts`, except after an edit or a delete, which always start again from the thread.
 
 **Where search is allowed** ([scope.py](../backends/lambdas/src/slack_app/knowledge/scope.py)). The answer is posted where everyone in the channel reads it, so a past thread may only appear where everyone could already read its channel:
 
@@ -304,7 +308,7 @@ next day Dave → check 10 min later → re-summarise → same keys, overwritten
 
 Every filter also requires `team_id` and excludes the thread being answered. The worker checks for guests with `conversations.members` + `users.info` (`is_restricted`, `is_ultra_restricted`), caches the result per channel for an hour, and limits the search to the channel if the check fails or the channel has over 1,000 members. The model never picks the filter: the agent builds it from the scope, and checks each hit against the scope again.
 
-**Retrieval** ([past_threads.py](../backends/agents/slack_agent/src/past_threads.py)). `search_past_threads(query)` embeds the query with Titan, runs `QueryVectors` (top 20), collapses side points into their thread, drops anything below a cosine similarity of 0.35 (`KNOWLEDGE_MIN_SIMILARITY`), and returns at most 5 threads in `<past_thread channel= started= last_reply= status= people= link=>` tags as untrusted data. The system prompt tells the model to search first for "has this happened before?", "how do we…?" and "what did we decide…?" questions, and to cite what it uses ("in #platform on 12 Sep, Carol found…") as what was found then, not as fact. It isn't run on every request.
+**Retrieval** ([past_threads.py](../backends/agents/slack_agent/src/past_threads.py)). `search_past_threads(query)` embeds the query with Titan, runs `QueryVectors` (top 20), collapses a thread's problem and learning vectors into one hit, drops anything below a cosine similarity of 0.35 (`KNOWLEDGE_MIN_SIMILARITY`), and returns at most 5 threads in `<past_thread channel= started= last_reply= status= people= link=>` tags as untrusted data. The system prompt tells the model to search first for "has this happened before?", "how do we…?" and "what did we decide…?" questions, and to cite what it uses ("in #platform on 12 Sep, Carol found…") as what was found then, not as fact. It isn't run on every request.
 
 ---
 
@@ -338,7 +342,7 @@ flowchart LR
         BRT["Bedrock · Claude Haiku 4.5<br/>triage"]:::model
         BR["Bedrock · Claude Haiku 4.5<br/>chat loop"]:::model
         BR2["Bedrock · Claude Haiku 4.5<br/>nested agents"]:::model
-        BRK["Bedrock · Claude Haiku 4.5 summaries<br/>+ Titan embeddings"]:::model
+        BRK["Bedrock · Claude Sonnet 5.5 summaries<br/>+ Titan embeddings"]:::model
     end
 
     LI["LinkedIn<br/>OAuth + REST /v2/userinfo"]:::ext
@@ -675,7 +679,7 @@ sequenceDiagram
         participant R as Runtime agent
     end
     box rgba(173,20,87,0.10) Bedrock
-        participant M as Claude Haiku · Titan
+        participant M as Claude Sonnet · Titan
     end
 
     P->>S: "Staging deploy fails with ECR throttling" + 4 replies
@@ -686,9 +690,9 @@ sequenceDiagram
     X->>S: conversations.info (internal? public?) + conversations.replies
     Note over X: a newer message exists → skip (all but the last check)
     X->>M: summarise (thread as quoted data)
-    M-->>X: PROBLEM · SOLUTION · STATUS · … or SKIP
-    X->>M: embed summary + side points (Titan)
-    X->>V: PutVectors T:C:ts#main, #side-1…
+    M-->>X: JSON: problems · learnings · decisions · … or SKIP
+    X->>M: embed each problem and learning (Titan)
+    X->>V: PutVectors T:C:ts#problem-1, #learning-1…
     Note over D: a month later
     D->>S: "@bot staging deploy is failing with ECR throttling"
     S->>E: app_mention
@@ -769,7 +773,7 @@ flowchart LR
 - **One generic CIMD implementation, not one integration per vendor.** Discovery, PKCE, refresh, the token store and the tool wrapper are provider-agnostic. Everything vendor-specific lives in one registry file.
 - **No AgentCore Memory.** Each Runtime session is a microVM that lives until it idles out (`idle_session_timeout_seconds = 300`) or hits its cap (`max_session_lifetime_seconds = 3600`), see [agent-runtime.tf](../infra-as-code/tf-app/agent-runtime.tf). Nothing is remembered between requests: the worker reads the Slack thread (first message plus the latest 30) and sends it every time, so a follow-up after the session idles out, or from someone else in the thread, has the same context. The thread goes into the prompt as delimited data, so other people's text can inform an answer but can't trigger a tool call on the requester's accounts. See [thread_prompt.py](../backends/agents/slack_agent/src/thread_prompt.py). Team knowledge ([2d](#2d-team-knowledge-memory-optional)) doesn't change this: it is what other threads concluded, searched on demand, not a conversation history.
 - **References, not bytes, for files.** Downloading in the Lambdas would spend the 3-second budget, overflow the 256 KB SQS limit, and send images to triage for nothing. The agent downloads with the bot token it already holds for progress updates, keeps the bytes in memory for one invocation, and can only open file IDs from the thread the worker read.
-- **S3 Vectors directly, not a Bedrock Knowledge Base, for team knowledge.** A thread summary is short and self-contained, so chunking and a managed ingestion pipeline would add little. `PutVectors` and `DeleteVectors` on stable keys (`team:channel:thread_ts#main`, `#side-n`) make overwriting a re-summarised thread and deleting a thread or channel exact. Per-user memory across conversations would be AgentCore Memory's job, and is out of scope.
+- **S3 Vectors directly, not a Bedrock Knowledge Base, for team knowledge.** A thread summary is short and self-contained, so chunking and a managed ingestion pipeline would add little. `PutVectors` and `DeleteVectors` on stable keys (`team:channel:thread_ts#problem-n`, `#learning-n`) make overwriting a re-summarised thread and deleting a thread or channel exact. Per-user memory across conversations would be AgentCore Memory's job, and is out of scope.
 - **Summarise on quiet, not on every message.** Each message queues a check 10 minutes out, and a check that sees a newer person's message skips. So a burst of messages costs one summary call, and all the Slack reads, model calls and vector writes happen in the indexer, outside `slack-events`' 3-second budget.
 - **One Lambda image, four handlers.** A single build is shared, and `image_config.command` selects the handler. The same code runs locally.
-- **Claude Haiku 4.5 throughout, configured per job.** `MODEL_ID` (chat loop), `TRIAGE_MODEL_ID` (the worker's reply/react/correct/ignore decision), `GITHUB_MODEL_ID` and `CIMD_MODEL_ID` (nested agents) all default to `us.anthropic.claude-haiku-4-5-20251001-v1:0`. Nova Micro used to drive the chat loop, but it couldn't reliably weigh a whole thread and hit `MaxTokensReachedException` chaining GitHub's large tool catalogue. Nested agents get 4096 output tokens, the chat loop 1024. The IAM policies allow-list every configured model's inference-profile and foundation-model ARNs, see [locals.tf](../infra-as-code/tf-app/locals.tf).
+- **Claude Haiku 4.5 on the answer path, configured per job.** `MODEL_ID` (chat loop), `TRIAGE_MODEL_ID` (the worker's reply/react/correct/ignore decision), `GITHUB_MODEL_ID` and `CIMD_MODEL_ID` (nested agents) all default to `us.anthropic.claude-haiku-4-5-20251001-v1:0`. Nova Micro used to drive the chat loop, but it couldn't reliably weigh a whole thread and hit `MaxTokensReachedException` chaining GitHub's large tool catalogue. Nested agents get 4096 output tokens, the chat loop 1024. Team knowledge summaries are the exception: they run off the answer path, once per quiet thread, and their quality caps what search can find, so `knowledge_summary_model_id` defaults to Claude Sonnet 5.5 (`anthropic.claude-sonnet-5-5`, with Haiku 4.5 as the fallback). The IAM policies allow-list every configured model's inference-profile and foundation-model ARNs, see [locals.tf](../infra-as-code/tf-app/locals.tf).
