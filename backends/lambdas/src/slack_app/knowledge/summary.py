@@ -11,10 +11,11 @@ front of the agent later. The prompt quotes it as data, and only the fields belo
 kept from the answer, each cut to a fixed length, so nothing else the model was talked
 into writing is stored.
 
-The call goes through InvokeModel with the Messages API body, not Converse: that is how
-Bedrock serves the newer Claude models (anthropic.claude-sonnet-5-5). If the model
-declines, or can't be used in this account (no model access, IAM), the fallback model
-writes the summary instead.
+The call goes through InvokeModel with the Messages API body, so Claude's own fields
+(effort) are set directly. Sonnet 5.5 is served on bedrock-runtime through the global
+cross-Region inference profile (global.anthropic.claude-sonnet-5-5), not its bare model
+ID. If the model declines, or can't be used in this account (no model access, IAM), the
+fallback model writes the summary instead.
 """
 
 import json
@@ -39,7 +40,7 @@ logger = logging.getLogger(__name__)
 # its problems and resolving "it" and "yesterday" is reading judgment, and it sets the
 # ceiling on what search can find. The job is off the answer path and runs once per quiet
 # thread, so latency doesn't matter and Sonnet costs cents per thread.
-DEFAULT_MODEL_ID = "anthropic.claude-sonnet-5-5"
+DEFAULT_MODEL_ID = "global.anthropic.claude-sonnet-5-5"
 DEFAULT_FALLBACK_MODEL_ID = "us.anthropic.claude-haiku-4-5-20251001-v1:0"
 DEFAULT_EFFORT = "low"
 # Room for the model's thinking as well as the JSON.
@@ -300,7 +301,7 @@ def request_body(model_id: str, prompt: str) -> dict:
 
 # ARN-versioned IDs (us.anthropic.claude-haiku-4-5-20251001-v1:0) are Bedrock's older Claude
 # models. They and Haiku 4.5 take a temperature but not effort; the newer models
-# (anthropic.claude-sonnet-5-5) reject a temperature other than the default and take effort.
+# (global.anthropic.claude-sonnet-5-5) reject a temperature other than the default and take effort.
 _ARN_VERSIONED = re.compile(r"-v\d+(:\d+)?$")
 
 

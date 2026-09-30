@@ -8,7 +8,7 @@ from slack_app.knowledge import summary
 from slack_app.knowledge.summary import Refused, SummaryError, parse
 from slack_app.thread_history import ThreadMessage
 
-SONNET = "anthropic.claude-sonnet-5-5"
+SONNET = "global.anthropic.claude-sonnet-5-5"
 HAIKU = "us.anthropic.claude-haiku-4-5-20251001-v1:0"
 
 ECR = {

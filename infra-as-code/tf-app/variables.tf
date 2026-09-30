@@ -87,10 +87,12 @@ variable "knowledge_summary_model_id" {
   description = <<-EOT
     Bedrock model the knowledge indexer summarises each quiet thread with (one InvokeModel
     call per thread). Working out which suggestion actually fixed a problem and splitting a
-    thread into its problems is reading judgment, so this defaults to Claude Sonnet 5.5;
-    enable it under Bedrock model access first. Until then the fallback model is used.
+    thread into its problems is reading judgment, so this defaults to Claude Sonnet 5.5,
+    through its global cross-Region inference profile (bedrock-runtime doesn't take the
+    bare model ID). Enable it under Bedrock model access first; until then the fallback
+    model is used.
   EOT
-  default     = "anthropic.claude-sonnet-5-5"
+  default     = "global.anthropic.claude-sonnet-5-5"
 }
 
 variable "knowledge_summary_fallback_model_id" {
