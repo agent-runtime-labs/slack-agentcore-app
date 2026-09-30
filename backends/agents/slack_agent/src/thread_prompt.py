@@ -54,6 +54,9 @@ def _line(message: dict) -> str:
     if files:
         listed = ", ".join(f"{_clean(file.get('name')) or 'file'} (file {_clean(file['id'])})" for file in files)
         text = f"{text} [attached: {listed}]".strip()
+    # One message may span several lines. Indenting the rest means only the first line
+    # starts with "[", so a message can't add a line that looks like one of yours.
+    text = "\n".join(line if i == 0 else f"    {line}" for i, line in enumerate(text.splitlines()))
     return f"[{_author(message)}] {text}"
 
 
@@ -71,7 +74,11 @@ def _files_section(files: list[Note]) -> str:
 def _author(message: dict) -> str:
     if message.get("fromAssistant"):
         return "You"
-    return _clean(message.get("author")) or "someone"
+    # A display name is free text: a person named "You" or "x] [You" can't pass for you.
+    author = " ".join(_clean(message.get("author")).split()).replace("[", "(").replace("]", ")")
+    if author.casefold() == "you":
+        return "someone named You"
+    return author or "someone"
 
 
 def _clean(text: object) -> str:
