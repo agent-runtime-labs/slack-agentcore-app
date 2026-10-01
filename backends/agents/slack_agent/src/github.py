@@ -14,6 +14,7 @@ from functools import lru_cache
 from typing import Callable
 
 import boto3
+import httpx
 from strands import Agent, tool
 from strands.models.bedrock import BedrockModel
 from strands.tools.mcp import MCPClient
@@ -89,16 +90,40 @@ def _github_agent_model() -> BedrockModel:
     )
 
 
+class _BearerAuth(httpx.Auth):
+    """Sends the user's token and remembers whether GitHub rejected it with a 401.
+
+    The MCP client reports every HTTP error status with the same generic exception text, so the
+    status code is only visible here, on the response itself.
+    """
+
+    def __init__(self, access_token: str):
+        self._access_token = access_token
+        self.unauthorized = False
+
+    def auth_flow(self, request):
+        request.headers["Authorization"] = f"Bearer {self._access_token}"
+        response = yield request
+        if response.status_code == 401:
+            self.unauthorized = True
+
+
 def _run_github_mcp_agent(access_token: str, request: str) -> str:
-    mcp_client = MCPClient(url=MCP_SERVER_URL, headers={"Authorization": f"Bearer {access_token}"})
-    with mcp_client:
-        github_agent = Agent(
-            model=_github_agent_model(),
-            system_prompt=GITHUB_AGENT_SYSTEM_PROMPT,
-            tools=mcp_client.list_tools_sync(),
-            callback_handler=None,
-        )
-        return str(github_agent(request)).strip()
+    auth = _BearerAuth(access_token)
+    mcp_client = MCPClient(url=MCP_SERVER_URL, auth_provider=auth)
+    try:
+        with mcp_client:
+            github_agent = Agent(
+                model=_github_agent_model(),
+                system_prompt=GITHUB_AGENT_SYSTEM_PROMPT,
+                tools=mcp_client.list_tools_sync(),
+                callback_handler=None,
+            )
+            return str(github_agent(request)).strip()
+    except MCPClientInitializationError as err:
+        if auth.unauthorized:
+            raise MCPClientInitializationError("GitHub rejected the access token (HTTP 401)") from err
+        raise
 
 
 def build_github_tool(get_workload_token: Callable[[], str], auth_state: AuthState):

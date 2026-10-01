@@ -1,7 +1,8 @@
-"""Hand-off from the fast Slack-facing handler to the slow agent worker.
+"""Hand-off from the fast Slack-facing handler to the slow workers.
 
-AWS: SQS FIFO queue -> agent_worker Lambda.
-Local (Tilt): a background thread calls the worker handler directly.
+AWS: SQS FIFO queue -> agent_worker Lambda, and the knowledge-index standard queue (with
+a delay) -> knowledge_indexer Lambda.
+Local (Tilt): a background thread or timer calls the handler directly.
 """
 
 import json
@@ -45,3 +46,24 @@ def enqueue(job: dict, group_id: str, dedup_id: str) -> None:
     event = {"Records": [{"messageId": dedup_id, "body": json.dumps(job)}]}
     threading.Thread(target=agent_worker.handler, args=(event, None), daemon=True).start()
     logger.info("Dispatched job %s to in-process worker", dedup_id)
+
+
+def enqueue_knowledge(job: dict, delay_seconds: int) -> None:
+    """Hand-off to the knowledge indexer: a standard SQS queue with a delay (knowledge/events.py).
+
+    Locally, a timer calls the indexer in this process after the same delay.
+    """
+    queue_url = os.getenv("KNOWLEDGE_QUEUE_URL")
+    if queue_url:
+        _sqs().send_message(QueueUrl=queue_url, MessageBody=json.dumps(job), DelaySeconds=delay_seconds)
+        return
+
+    if not is_local():
+        raise RuntimeError("KNOWLEDGE_QUEUE_URL is not set")
+
+    from slack_app.handlers import knowledge_indexer  # local import: avoid a cycle at module load
+
+    event = {"Records": [{"messageId": f"local-{job.get('trigger_ts') or job['kind']}", "body": json.dumps(job)}]}
+    timer = threading.Timer(delay_seconds, knowledge_indexer.handler, args=(event, None))
+    timer.daemon = True
+    timer.start()

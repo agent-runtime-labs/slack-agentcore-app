@@ -96,6 +96,22 @@ def read_thread(client, channel: str, thread_ts: str, message_ts: str, bot_user_
     return Thread(history=earlier, message=new)
 
 
+def read_whole_thread(client, channel: str, thread_ts: str, bot_user_id: str | None) -> list[tuple[dict, ThreadMessage]]:
+    """Every message in the thread, oldest first, as (Slack's raw message, what people see).
+
+    For the knowledge indexer, which summarises the whole thread. Raises if Slack can't be
+    read, unlike read_thread: a thread read only in part must not overwrite its summary.
+    """
+    raw = _replies(client, channel, thread_ts)
+    names = _names(raw, bot_user_id)
+    return [
+        (item, _to_message(item, names, bot_user_id))
+        for item in raw
+        if item.get("subtype") in _CONVERSATION_SUBTYPES
+        and not (item.get("user") == bot_user_id and item.get("text") == PLACEHOLDER_TEXT)
+    ]
+
+
 def readable(text: str, names: dict[str, str] | None = None) -> str:
     """Slack markup -> what a reader sees: "<@U123>" becomes "@Alice", or "@someone" if the name is unknown."""
     names = names or {}
@@ -103,14 +119,14 @@ def readable(text: str, names: dict[str, str] | None = None) -> str:
     return _BROADCAST.sub(lambda match: f"@{match.group(1)}", text).strip()
 
 
-def _replies(client, channel: str, thread_ts: str, message_ts: str) -> list[dict]:
+def _replies(client, channel: str, thread_ts: str, message_ts: str | None = None) -> list[dict]:
     messages: list[dict] = []
     cursor = None
     for _ in range(MAX_PAGES):
         kwargs = {"cursor": cursor} if cursor else {}
-        response = client.conversations_replies(
-            channel=channel, ts=thread_ts, latest=message_ts, inclusive=True, limit=PAGE_SIZE, **kwargs
-        )
+        if message_ts:
+            kwargs.update(latest=message_ts, inclusive=True)
+        response = client.conversations_replies(channel=channel, ts=thread_ts, limit=PAGE_SIZE, **kwargs)
         messages += response.get("messages") or []
         cursor = (response.get("response_metadata") or {}).get("next_cursor")
         if not cursor:

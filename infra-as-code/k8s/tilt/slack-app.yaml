@@ -1,4 +1,4 @@
-# The three Lambda handlers behind a local FastAPI server (stands in for API Gateway + SQS).
+# The Lambda handlers behind a local FastAPI server (stands in for API Gateway + SQS).
 apiVersion: apps/v1
 kind: Deployment
 metadata:

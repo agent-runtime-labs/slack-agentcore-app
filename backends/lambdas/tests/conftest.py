@@ -26,16 +26,27 @@ def local_env(monkeypatch):
         "ENGAGED_THREADS_TABLE",
         "SLACK_SECRET_ARN",
         "AGENT_LOCAL_URL",
+        "KNOWLEDGE_ENABLED",
+        "KNOWLEDGE_QUEUE_URL",
+        "KNOWLEDGE_VECTOR_BUCKET",
+        "KNOWLEDGE_EXCLUDED_CHANNELS",
+        "KNOWLEDGE_QUIET_SECONDS",
+        "KNOWLEDGE_SUMMARY_MODEL_ID",
+        "KNOWLEDGE_SUMMARY_FALLBACK_MODEL_ID",
+        "KNOWLEDGE_SUMMARY_EFFORT",
     ):
         monkeypatch.delenv(name, raising=False)
 
     from slack_app import config, engaged_threads, pending_auth, slack
+    from slack_app.knowledge import channels, store
 
     config.slack_credentials.cache_clear()
     slack.slack_client.cache_clear()
     slack._auth_test_user_id.cache_clear()
     pending_auth.pending_auth_store.cache_clear()
     engaged_threads.engaged_thread_store.cache_clear()
+    store.knowledge_store.cache_clear()
+    channels.clear_caches()
     yield
 
 

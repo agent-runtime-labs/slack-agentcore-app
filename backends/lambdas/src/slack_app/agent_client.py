@@ -35,6 +35,7 @@ def invoke_agent(
     requester: str | None = None,
     files: list[dict] | None = None,
     mode: str = MODE_REPLY,
+    knowledge: dict | None = None,
 ) -> dict:
     """Returns the agent's JSON response: {"message": str, "authRequired": dict | None}.
 
@@ -45,20 +46,23 @@ def invoke_agent(
     agent downloads them from Slack itself.
     In MODE_CORRECT the agent gets no tools and returns an empty message if there is
     nothing to correct.
+    knowledge is the search scope for past threads (knowledge/scope.py); without it the
+    agent has no search_past_threads tool.
     """
-    payload = json.dumps(
-        {
-            "prompt": prompt,
-            "userId": runtime_user_id,
-            "sessionId": session_id,
-            "channel": channel,
-            "messageTs": message_ts,
-            "thread": thread or [],
-            "requester": requester,
-            "files": files or [],
-            "mode": mode,
-        }
-    )
+    body = {
+        "prompt": prompt,
+        "userId": runtime_user_id,
+        "sessionId": session_id,
+        "channel": channel,
+        "messageTs": message_ts,
+        "thread": thread or [],
+        "requester": requester,
+        "files": files or [],
+        "mode": mode,
+    }
+    if knowledge:
+        body["knowledge"] = knowledge
+    payload = json.dumps(body)
 
     local_url = os.getenv("AGENT_LOCAL_URL")
     if local_url:

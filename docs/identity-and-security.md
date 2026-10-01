@@ -104,6 +104,24 @@ The bot reads files people attach and pages they link to. Both bring outside con
 
 The `files:read` scope lets the bot read any file in a conversation it's a member of, which is the same reach as the `*:history` scopes it already has for messages.
 
+## Team knowledge: what one thread can show in another
+
+With `knowledge_enabled`, the bot summarises threads and can cite them in *other* channels ([architecture.md](architecture.md#2d-team-knowledge-memory-optional)). The rule that keeps this safe: an answer is posted where everyone in the channel reads it, so a past thread may only appear where **everyone who sees the answer could already read the channel it came from**.
+
+| Risk | Control | Where |
+|---|---|---|
+| A private channel's thread shown elsewhere | Each vector is tagged `visibility: private` from `conversations.info`. A private thread is only found by a question asked in its own channel, whose members can already scroll its history | [scope.py](../backends/lambdas/src/slack_app/knowledge/scope.py), [past_threads.py](../backends/agents/slack_agent/src/past_threads.py) |
+| A guest shown a channel they weren't invited to | Before each search, the worker checks the channel's members for single- and multi-channel guests (`is_restricted`, `is_ultra_restricted`). With a guest in it, search is limited to that channel's own threads. The check is cached for an hour per channel, and a failed check (or a channel over 1,000 members) counts as "has a guest" | [channels.py](../backends/lambdas/src/slack_app/knowledge/channels.py) |
+| The model widening its own search | The worker decides the scope from Slack, not from the prompt. The agent builds the `QueryVectors` filter from that scope, always adds `team_id`, and checks every hit against the scope again. The model only supplies the query text | [past_threads.py](../backends/agents/slack_agent/src/past_threads.py) |
+| DMs, Slack Connect channels and tool output in the index | Never indexed. `slack-events` drops DM and `is_ext_shared_channel` events, and the indexer checks `conversations.info` again. If it can't confirm a channel is internal, and whether it's public or private, it skips the thread. Its only input is `conversations.replies`, so nothing a tool returned from someone's GitHub, Linear, Notion or LinkedIn is stored beyond what the bot posted in the channel. In DMs and Slack Connect channels the tool doesn't exist | [events.py](../backends/lambdas/src/slack_app/knowledge/events.py), [knowledge_indexer.py](../backends/lambdas/src/slack_app/handlers/knowledge_indexer.py) |
+| Stale access after the bot leaves or a channel changes | `channel_left`/`group_left` delete the channel's vectors at once. A daily sweep deletes vectors for channels the bot can no longer see, that became Slack Connect or were excluded, and retags channels that switched between public and private. A deleted first message deletes its thread | [knowledge_indexer.py](../backends/lambdas/src/slack_app/handlers/knowledge_indexer.py) |
+| Prompt injection stored in a thread ("bot, ignore previous instructions…") | Twice quoted as data: the summary prompt treats the thread as data and keeps only fixed, length-capped fields. Search results come back in `<past_thread>` tags labelled untrusted, and the system prompt says a past thread never justifies a tool call or an action | [summary.py](../backends/lambdas/src/slack_app/knowledge/summary.py), [past_threads.py](../backends/agents/slack_agent/src/past_threads.py), `PAST_THREADS_RULE` in [main.py](../backends/agents/slack_agent/src/main.py) |
+| Indexing slowing or breaking answers | `slack-events` only sends one SQS message with IDs, and never raises. The indexer is a separate Lambda with its own queue and DLQ | [events.py](../backends/lambdas/src/slack_app/knowledge/events.py) |
+
+IAM stays narrow: the indexer may `PutVectors`, `GetVectors`, `DeleteVectors` and `ListVectors` on the one index and invoke the summary model and Titan. The runtime may only `QueryVectors` and `GetVectors` on it and invoke Titan. `slack-events` may only send to the `knowledge-index` queue ([knowledge.tf](../infra-as-code/tf-app/knowledge.tf)).
+
+The feature needs three more read scopes: `channels:read` and `groups:read` (`conversations.info`, `conversations.members`) and `users:read` (the guest check). They let the bot see channel metadata, membership and user profiles, not message content.
+
 ## Other controls
 
 | Control | Where |
@@ -113,10 +131,10 @@ The `files:read` scope lets the bot read any file in a conversation it's a membe
 | CIMD providers have no client secret at all (public client, PKCE S256 + exact redirect URI) | [cimd_client.py](../backends/lambdas/src/slack_app/cimd_client.py) |
 | Per-user CIMD tokens isolated by primary key, encrypted at rest, TTL-expired, write-only for the callback role | [data-stores.tf](../infra-as-code/tf-app/data-stores.tf), [lambdas.tf](../infra-as-code/tf-app/lambdas.tf) |
 | Least-privilege roles: one per Lambda, scoped to its queue, table, secret, or runtime | [lambdas.tf](../infra-as-code/tf-app/lambdas.tf) |
-| Runtime role limited to its allow-listed models (chat + MCP sub-agents), its credential providers (`oauth2_credential_provider_names`) and the CIMD token table | [agentcore-runtime/iam.tf](../infra-as-code/tf-modules/aws/agentcore-runtime/iam.tf), [tf-app/locals.tf](../infra-as-code/tf-app/locals.tf) |
+| Runtime role limited to its allow-listed models (chat + MCP sub-agents), its credential providers (`oauth2_credential_provider_names`), the CIMD token table and, with team knowledge on, read-only access to the knowledge index | [agentcore-runtime/iam.tf](../infra-as-code/tf-modules/aws/agentcore-runtime/iam.tf), [tf-app/locals.tf](../infra-as-code/tf-app/locals.tf) |
 | API throttling (20 rps steady, 40 burst by default) | `aws_apigatewayv2_stage.default` |
 | Access logs without query strings (the nonce stays out of logs) | same |
-| Encryption at rest | SQS SSE, DynamoDB SSE, ECR AES256 |
+| Encryption at rest | SQS SSE, DynamoDB SSE, S3 Vectors SSE-S3, ECR AES256 |
 | Loop prevention: bot messages, edits, and Slack retries are ignored | [slack.py](../backends/lambdas/src/slack_app/slack.py) `should_handle` |
 | No automatic retry of agent invocations (avoids double answers) | `agent_client.py` (`total_max_attempts=1`) and the worker (errors reported, not raised) |
 | Containers run as non-root | Dockerfiles |
@@ -126,6 +144,7 @@ The `files:read` scope lets the bot read any file in a conversation it's a membe
 
 - LinkedIn, GitHub, Linear or Notion data is posted **in the thread where it was requested**. In a public channel, others can read it. DM the bot for private data.
 - There is no stored conversation history. For every message, the worker reads the Slack thread and sends it to the agent, so anything posted in a thread (including the bot's answers from someone's connected accounts) becomes context for later messages in that thread, whoever sends them. Tool calls still only ever use the requester's own accounts, and the thread goes into the prompt as delimited data rather than as instructions.
+- With team knowledge on, every thread in the internal channels the bot is in is sent to Bedrock once it goes quiet, and a summary of it (with names and links) is stored in S3 Vectors until the thread is deleted, the bot leaves, or the channel is excluded. It can be cited in other channels within the rules above. Exclude channels where that isn't acceptable (`knowledge_excluded_channels`).
 - A file or page the bot reads is sent to Bedrock, like the thread is. An answer based on a file is posted in the thread, where everyone who can see the thread (and so the file) can read it.
 - Local development uses real AWS credentials, copied into a Kubernetes Secret in your local cluster.
 

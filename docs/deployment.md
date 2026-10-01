@@ -120,6 +120,7 @@ The ECR repositories are force-deleted, and the `cimd-tokens` table goes with th
 | Item | Driver |
 |---|---|
 | Claude Haiku 4.5 | $1 per 1M input tokens / $5 per 1M output tokens. Every channel message the bot can see gets a triage call, which includes the thread so far (up to 31 messages), and each answer includes it too. In busy channels with long threads, triage is the larger share. |
+| Claude Sonnet 5.5 (team knowledge, if enabled) | One summary call per quiet thread, at a few thousand input tokens and about 1,000 output tokens: roughly 2 cents a thread at Anthropic's list price ($2 / $10 per 1M tokens; Bedrock's own rate applies). Chit-chat threads cost the same call and are then skipped. Titan embeddings add a fraction of a cent. |
 | AgentCore Runtime | Billed per second of CPU and memory while a session is active. Sessions idle out after 5 min (`idle_session_timeout_seconds = 300`) and are hard-capped at 1 hour (`max_session_lifetime_seconds = 3600`). |
 | Lambda, API Gateway, SQS, DynamoDB | Pay-per-request; effectively free-tier at sandbox volume. |
 | ECR | Storage for up to 10 images per repository. |
