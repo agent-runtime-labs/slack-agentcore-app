@@ -1,4 +1,6 @@
+import http.server
 import sys
+import threading
 from pathlib import Path
 
 import pytest
@@ -94,3 +96,72 @@ def test_max_tokens_reached_is_reported_without_swallowing_success(calls):
 
     assert output.startswith("ERROR:")
     assert "too much output" in output
+
+
+@pytest.fixture
+def mcp_stub(monkeypatch):
+    """A loopback HTTP server standing in for GitHub's MCP endpoint, so the real MCPClient stack
+    is exercised end to end. It answers every request with the status set in `stub["status"]`."""
+    stub = {"status": 401, "authorization": []}
+
+    class Handler(http.server.BaseHTTPRequestHandler):
+        def _respond(self):
+            self.rfile.read(int(self.headers.get("content-length") or 0))
+            stub["authorization"].append(self.headers.get("Authorization"))
+            self.send_response(stub["status"])
+            self.send_header("content-length", "0")
+            self.end_headers()
+
+        do_GET = do_POST = do_DELETE = _respond
+
+        def log_message(self, *args):
+            pass
+
+    server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    for var in ("NO_PROXY", "no_proxy"):
+        monkeypatch.setenv(var, "127.0.0.1")
+    monkeypatch.setattr(github, "MCP_SERVER_URL", f"http://127.0.0.1:{server.server_address[1]}/mcp/")
+    yield stub
+    server.shutdown()
+    server.server_close()
+
+
+@pytest.fixture
+def fetches(monkeypatch):
+    log = []
+    responses = []
+
+    def fake_fetch(workload_token, force=False):
+        log.append((workload_token, force))
+        return responses.pop(0)
+
+    monkeypatch.setattr(github, "fetch_token", fake_fetch)
+    return log, responses
+
+
+def test_mcp_server_401_forces_reauthentication(mcp_stub, fetches):
+    # The MCP client reports every HTTP error with the same generic text, so the 401 has to be
+    # detected from the response status itself, not from the exception message.
+    log, responses = fetches
+    responses += [{"accessToken": "revoked"}, {"authorizationUrl": "https://gh/auth", "sessionUri": "urn:s3"}]
+
+    output, state = run_tool()
+
+    assert output.startswith("AUTHORIZATION_REQUIRED")
+    assert log == [("wat-alice", False), ("wat-alice", True)]
+    assert state.session_uri == "urn:s3"
+    assert mcp_stub["authorization"] and set(mcp_stub["authorization"]) == {"Bearer revoked"}
+
+
+def test_mcp_server_500_is_an_error_not_a_consent_prompt(mcp_stub, fetches):
+    log, responses = fetches
+    mcp_stub["status"] = 500
+    responses.append({"accessToken": "gh-token"})
+
+    output, state = run_tool()
+
+    assert output == "ERROR: could not reach GitHub right now"
+    assert log == [("wat-alice", False)]
+    assert state.as_dict() is None
+    assert set(mcp_stub["authorization"]) == {"Bearer gh-token"}
