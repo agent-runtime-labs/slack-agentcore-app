@@ -2,3 +2,4 @@
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | 2026-09-29 | infra-and-dev-loop | Tilt unit-tests skipped scripts/tests (drift from make test); LLM_EVAL=blocked, tf-fmt blocked (no terraform) | #31 | #32 (draft) | yes | ACCEPT | drifted suites 1->0; tests 256->259 | 15b6353b | first night (no prior rows) |
 | 2026-09-29 | infra-and-dev-loop | Worker/queue timeout chain (agent read 120 < worker 150 <= visibility 900/6) unguarded; run 2; LLM_EVAL=blocked, tf-fmt blocked (no terraform) | #34 | #35 (draft) | yes | ACCEPT | unsafe timeout edits caught 0/3->3/3, FP 0/1; tests 259->262 | b2070b59 | #31 CLOSED, #32 MERGED |
+| 2026-10-01 | agent-tools | GitHub tool never re-asked consent on MCP 401 (mcp 2.x error text drops HTTP status); LLM_EVAL=blocked, tf-fmt blocked (no terraform) | #38 | #39 (draft) | yes | ACCEPT | 401 re-consent 0/1->1/1; tests 389->391 | a37263bd | 2026-09-29: #31 CLOSED, #32 MERGED |

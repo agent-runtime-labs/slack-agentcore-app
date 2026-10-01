@@ -47,6 +47,13 @@ k8s_object('ConfigMap', 'app-config', {
     'CIMD_TOKEN_TABLE': os.getenv('CIMD_TOKEN_TABLE', ''),
     'CIMD_CLIENT_ID': PUBLIC_BASE_URL + '/oauth2/client-metadata.json',
     'CIMD_MODEL_ID': os.getenv('CIMD_MODEL_ID', 'us.anthropic.claude-haiku-4-5-20251001-v1:0'),
+    # Team knowledge memory: off unless pointed at a real dev S3 Vectors bucket (there is
+    # no local emulator). The quiet period is short here so the indexer runs soon.
+    'KNOWLEDGE_ENABLED': os.getenv('KNOWLEDGE_ENABLED', 'false'),
+    'KNOWLEDGE_VECTOR_BUCKET': os.getenv('KNOWLEDGE_VECTOR_BUCKET', ''),
+    'KNOWLEDGE_INDEX': os.getenv('KNOWLEDGE_INDEX', 'threads'),
+    'KNOWLEDGE_QUIET_SECONDS': os.getenv('KNOWLEDGE_QUIET_SECONDS', '30'),
+    'KNOWLEDGE_EXCLUDED_CHANNELS': os.getenv('KNOWLEDGE_EXCLUDED_CHANNELS', ''),
     'COOKIE_SECURE': 'false',
     'SLACK_DRY_RUN': SLACK_DRY_RUN,
     'OTEL_SDK_DISABLED': 'true',

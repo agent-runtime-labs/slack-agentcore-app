@@ -34,3 +34,13 @@ output "slack_secret_arn" {
 output "processing_dlq_url" {
   value = aws_sqs_queue.processing_dlq.url
 }
+
+output "knowledge_vector_bucket" {
+  description = "S3 Vectors bucket holding team knowledge (null unless knowledge_enabled)"
+  value       = local.knowledge_bucket
+}
+
+output "knowledge_index_dlq_url" {
+  description = "Knowledge-indexer jobs that failed three times (null unless knowledge_enabled)"
+  value       = one(aws_sqs_queue.knowledge_index_dlq[*].url)
+}

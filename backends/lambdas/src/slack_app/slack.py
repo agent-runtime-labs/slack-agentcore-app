@@ -87,6 +87,22 @@ class DryRunSlackClient:
         self._log("auth.test", **kwargs)
         return {"ok": True, "user_id": DRY_RUN_BOT_USER_ID}
 
+    # Team knowledge (knowledge/channels.py): every channel is an internal public one
+    # the bot is in, with no guests.
+    def conversations_info(self, channel: str, **kwargs) -> dict:
+        is_im = channel.startswith("D")
+        return {"ok": True, "channel": {"id": channel, "name": "local-dev", "is_channel": not is_im, "is_im": is_im,
+                                        "is_private": False, "is_ext_shared": False, "is_member": True}}  # fmt: skip
+
+    def conversations_members(self, **kwargs) -> dict:
+        return {"ok": True, "members": []}
+
+    def users_info(self, user: str, **kwargs) -> dict:
+        return {"ok": True, "user": {"id": user, "is_restricted": False, "is_ultra_restricted": False}}
+
+    def chat_getPermalink(self, channel: str, message_ts: str, **kwargs) -> dict:  # noqa: N802
+        return {"ok": True, "permalink": f"https://slack.com/archives/{channel}/p{message_ts.replace('.', '')}"}
+
 
 @lru_cache(maxsize=1)
 def slack_client() -> WebClient | DryRunSlackClient:
