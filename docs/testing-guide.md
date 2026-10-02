@@ -74,6 +74,7 @@ make test
 | [test_identity.py](../backends/lambdas/tests/test_identity.py) | User and session IDs are per user and per workspace |
 | [test_linkedin_tool.py](../backends/agents/slack_agent/tests/test_linkedin_tool.py) | Token found, consent needed, revoked token, local workload token fallback |
 | [test_github_tool.py](../backends/agents/slack_agent/tests/test_github_tool.py) | Token found, consent needed, revoked token, output too long. A loopback stub of GitHub's MCP server checks that a real HTTP 401 asks the user to reconnect and a 500 does not |
+| [test_cimd_tool.py](../backends/agents/slack_agent/tests/test_cimd_tool.py) | CIMD token lifecycle: use, refresh, failed refresh, consent with PKCE, output too long. A loopback stub of a provider's MCP server checks that a real HTTP 401 forgets the connection and asks again, and a 500 keeps it |
 | [test_attachments.py](../backends/lambdas/tests/test_attachments.py) (lambdas) | Slack's `files[]` become references (no URLs), deleted files are skipped, labels such as `q3-report.pdf (1.2 MB)` |
 | [test_attachments.py](../backends/agents/slack_agent/tests/test_attachments.py) (agent) | Latest files are opened up front with a note each; earlier ones only through `read_attachment`; file IDs outside the thread are refused; limits are checked before downloading |
 | [test_content_blocks.py](../backends/agents/slack_agent/tests/test_content_blocks.py) | File type → Converse block, unsupported types with a reason, image downscaling, safe unique document names, UTF-8 check, the 20-image / 5-document limits |

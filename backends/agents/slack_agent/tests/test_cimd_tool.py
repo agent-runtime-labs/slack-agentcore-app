@@ -6,8 +6,11 @@ logic -- which of the four paths a request takes, and what the user is asked to 
 """
 
 import base64
+import dataclasses
 import hashlib
+import http.server
 import sys
+import threading
 import time
 from pathlib import Path
 from urllib.parse import parse_qs, urlsplit
@@ -219,3 +222,59 @@ def test_tools_are_named_after_the_provider(mcp_calls):
 def test_no_token_table_means_no_cimd_tools(monkeypatch):
     monkeypatch.setattr(config, "CIMD_TOKEN_TABLE", "")
     assert cimd_tool.build_cimd_tools(USER, AuthState()) == []
+
+
+@pytest.fixture
+def mcp_stub(monkeypatch):
+    """A loopback HTTP server standing in for the provider's MCP endpoint, so the real MCPClient
+    stack is exercised end to end. It answers every request with the status set in `stub["status"]`."""
+    stub = {"status": 401, "authorization": []}
+
+    class Handler(http.server.BaseHTTPRequestHandler):
+        def _respond(self):
+            self.rfile.read(int(self.headers.get("content-length") or 0))
+            stub["authorization"].append(self.headers.get("Authorization"))
+            self.send_response(stub["status"])
+            self.send_header("content-length", "0")
+            self.end_headers()
+
+        do_GET = do_POST = do_DELETE = _respond
+
+        def log_message(self, *args):
+            pass
+
+    server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    for var in ("NO_PROXY", "no_proxy"):
+        monkeypatch.setenv(var, "127.0.0.1")
+    stub["provider"] = dataclasses.replace(LINEAR, mcp_url=f"http://127.0.0.1:{server.server_address[1]}/mcp")
+    yield stub
+    server.shutdown()
+    server.server_close()
+
+
+def test_mcp_server_401_forgets_the_connection_and_asks_again(mcp_stub):
+    # The MCP client reports every HTTP error with the same generic text, so the 401 has to be
+    # detected from the response status itself, not from the exception message.
+    store = FakeStore(stored())
+    state = AuthState()
+
+    output = cimd_tool.build_cimd_tool(mcp_stub["provider"], USER, state, store)(request="list my open issues")
+
+    assert output.startswith("AUTHORIZATION_REQUIRED")
+    assert store.deleted == [(USER, "linear")]
+    assert state.cimd["provider"] == "linear"
+    assert mcp_stub["authorization"] and set(mcp_stub["authorization"]) == {"Bearer at-1"}
+
+
+def test_mcp_server_500_keeps_the_connection(mcp_stub):
+    mcp_stub["status"] = 500
+    store = FakeStore(stored())
+    state = AuthState()
+
+    output = cimd_tool.build_cimd_tool(mcp_stub["provider"], USER, state, store)(request="list my open issues")
+
+    assert output == "ERROR: could not reach Linear right now"
+    assert store.deleted == []
+    assert state.as_dict() is None
+    assert set(mcp_stub["authorization"]) == {"Bearer at-1"}
