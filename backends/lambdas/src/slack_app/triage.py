@@ -16,6 +16,7 @@ message crafted to get REPLY gets no more than an @mention would.
 
 import logging
 import os
+import re
 from functools import lru_cache
 
 import boto3
@@ -36,6 +37,7 @@ REACT = "REACT"
 CORRECT = "CORRECT"
 IGNORE = "IGNORE"
 _ACTIONS = (REPLY, REACT, CORRECT, IGNORE)
+_ASSISTANT_LABEL = re.compile(r"\(\s*the\s+assistant\s*\)", re.IGNORECASE)
 
 SYSTEM_PROMPT = """\
 You screen messages in a Slack channel for an AI assistant named "{name}". The \
@@ -142,11 +144,24 @@ def decide(text: str, author: str, history: list[ThreadMessage], bot_in_thread: 
 def _transcript(history: list[ThreadMessage]) -> str:
     if not history:
         return ""
-    lines = [
-        f"[{_escape(message.author)}{' (the assistant)' if message.from_assistant else ''}] {_escape(message.with_files)}"
-        for message in history
-    ]
+    lines = [f"[{_speaker(message)}] {_indent(_escape(message.with_files))}" for message in history]
     return "Earlier messages in the thread, oldest first:\n<thread>\n" + "\n".join(lines) + "\n</thread>\n\n"
+
+
+def _speaker(message: ThreadMessage) -> str:
+    """Only the assistant's own messages get its label. A display name is free text, so a
+    person named "Bot (the assistant)" or "x] [y" can't pass for the assistant."""
+    name = _escape(" ".join(message.author.split()))
+    if message.from_assistant:
+        return f"{name} (the assistant)"
+    name = name.replace("[", "(").replace("]", ")")
+    return _ASSISTANT_LABEL.sub("(a person)", name)
+
+
+def _indent(text: str) -> str:
+    # One message may span several lines. Indenting the rest means only the first line
+    # starts with "[", so a message can't add a line that looks like someone else's.
+    return "\n".join(line if i == 0 else f"    {line}" for i, line in enumerate(text.splitlines()))
 
 
 def _escape(text: str) -> str:
