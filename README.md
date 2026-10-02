@@ -1,6 +1,12 @@
-# Slack × Amazon Bedrock AgentCore
+<p align="center">
+  <img src="docs/assets/mitra.png" alt="Mitra, the Slack assistant" width="220">
+</p>
 
-A Slack assistant running on **Amazon Bedrock AgentCore Runtime** (Strands Agents + **Claude Haiku 4.5**) that reads the Slack thread before it answers, so it joins a conversation the way a colleague would, reads the files and links people share, and acts on **each user's own accounts**, never a shared one:
+<h1 align="center">Mitra</h1>
+
+<p align="center"><em>Slack × Amazon Bedrock AgentCore</em></p>
+
+**Mitra** is a Slack assistant running on **Amazon Bedrock AgentCore Runtime** (Strands Agents + **Claude Haiku 4.5**) that reads the Slack thread before it answers, so it joins a conversation the way a colleague would, reads the files and links people share, and acts on **each user's own accounts**, never a shared one:
 
 - **LinkedIn and GitHub** through **AgentCore Identity** — AWS is the OAuth client and owns the token vault.
 - **Linear and Notion** through **CIMD** ([Client ID Metadata Documents](docs/cimd-providers.md), MCP SEP-991) — no client ID, no client secret, no registration: the app identifies itself to their authorization servers with the URL of a JSON document it publishes. Adding another CIMD server is one entry in a registry.
