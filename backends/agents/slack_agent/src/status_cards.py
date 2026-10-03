@@ -1,21 +1,26 @@
 """Slack Block Kit cards for the public service-status tool (see status_mcp.py).
 
 The tool reads a status MCP server (StatusPulse) and the model writes one or two short
-sentences; this module turns the structured result into the cards that follow them:
+sentences; this module turns the structured result into the message around them:
 
     <the model's short answer>
-    🚦 Service status
-    1 of 3 services need attention
-    🟠 GitHub — Major outage
-    Git Operations degraded
-    ⚠️ Delayed webhook delivery · investigating
-    🟢 Cloudflare — Operational
-    ...
-    Live from each provider's public status page · updated 10:42
+    ▌🚦 Service status · 2 of 10 need attention                  (bar: red/orange/amber/green)
+    ▌🟡 Cloudflare — Minor issues                      [Status page]
+    ▌Minor Service Outage
+    ▌⚠️ Workers Build failing to start · investigating
+    ▌🟡 Twilio — Minor issues                          [Status page]
+    ▌🟢 GitHub        🟢 Discord                       (healthy services: two-column grid)
+    ▌🟢 OpenAI        🟢 Claude
+    ▌Live from each provider's public status page · updated 10:42
 
-Everything in a card that comes from a status page is third-party text. It is escaped for
-Slack (so `<!channel>` or a spoofed link can't fire), whitespace-collapsed and truncated,
-and an unrecognised indicator never reaches the output as-is.
+Only services with a problem get a full card, worst first; healthy ones are a compact grid,
+and when everything is healthy the whole thing is two lines. The cards sit in a Slack
+attachment, which is what gives the message its colour bar.
+
+Everything that comes from a status page is third-party text. It is escaped for Slack (so
+`<!channel>` or a spoofed link can't fire), whitespace-collapsed and truncated, a link
+button is only made for an https URL, and an unrecognised indicator never reaches the
+output as-is.
 
 Nothing here touches the network or Slack, so it is cheap to test.
 """
@@ -23,10 +28,14 @@ Nothing here touches the network or Slack, so it is cheap to test.
 import time
 from dataclasses import dataclass, field
 
-MAX_SERVICES = 10
+MAX_SERVICES = 30  # how many a result may hold; extra entries are ignored
+MAX_PROBLEMS = 10  # full cards shown (worst first)
+MAX_OPERATIONAL = 20  # names shown in the healthy grid
 MAX_INCIDENTS = 3
 MAX_TEXT_CHARS = 300
 MAX_SECTION_CHARS = 3000  # Slack's limit for the text of one section block
+MAX_FIELDS = 10  # Slack's limit for the fields of one section block
+MAX_URL_CHARS = 2000
 
 # indicator -> (emoji, label, severity). Statuspage's own indicator names.
 _INDICATORS = {
@@ -36,6 +45,9 @@ _INDICATORS = {
     "critical": ("\U0001f534", "Critical outage", 3),
 }
 _UNKNOWN = ("⚪", "Status unknown", 1)  # shown with the problems, not buried among the greens
+
+# Colour bar by the worst severity in the result.
+_COLORS = {0: "#2EB67D", 1: "#ECB22E", 2: "#E8912D", 3: "#E01E5A"}
 
 
 @dataclass(frozen=True)
@@ -51,6 +63,8 @@ class Service:
     indicator: str  # one of _INDICATORS, or "unknown"
     description: str
     incidents: tuple[Incident, ...] = ()
+    more_incidents: int = 0  # reported by the server but not kept
+    url: str = ""  # the provider's status page; empty unless it is a plain https URL
 
     @property
     def emoji(self) -> str:
@@ -70,10 +84,25 @@ def escape(text: str) -> str:
     return text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
 
 
+def defang(text: str) -> str:
+    """Stops `<!channel>`-style broadcasts in text a model may have copied from a status page.
+
+    Only the `<!` that starts them is changed, so the model's own *bold*, links and mentions work.
+    """
+    return text.replace("<!", "&lt;!")
+
+
 def clean(value: object, limit: int = MAX_TEXT_CHARS) -> str:
     """Single-line, length-capped, unescaped text from an untrusted value."""
     text = " ".join(str(value if value is not None else "").split())
     return text if len(text) <= limit else text[: limit - 1].rstrip() + "…"
+
+
+def _https_url(value: object) -> str:
+    """The URL if it is a plain https link a button can safely open, else ''."""
+    url = value.strip() if isinstance(value, str) else ""
+    ok = url.startswith("https://") and len(url) <= MAX_URL_CHARS and not any(c.isspace() for c in url)
+    return url if ok else ""
 
 
 def parse_services(structured: object) -> list[Service]:
@@ -90,10 +119,10 @@ def parse_services(structured: object) -> list[Service]:
         if not isinstance(item, dict) or not item.get("name"):
             continue
         indicator = clean(item.get("indicator"), 20).lower()
+        raw = item.get("incidents")
+        named = [i for i in (raw[:50] if isinstance(raw, list) else []) if isinstance(i, dict) and i.get("name")]
         incidents = tuple(
-            Incident(name=clean(i.get("name"), 120), status=clean(i.get("status"), 40))
-            for i in (item.get("incidents") or [])[:MAX_INCIDENTS]
-            if isinstance(i, dict) and i.get("name")
+            Incident(name=clean(i["name"], 120), status=clean(i.get("status"), 40)) for i in named[:MAX_INCIDENTS]
         )
         services.append(
             Service(
@@ -102,49 +131,97 @@ def parse_services(structured: object) -> list[Service]:
                 indicator=indicator if indicator in _INDICATORS else "unknown",
                 description=clean(item.get("description")),
                 incidents=incidents,
+                more_incidents=len(named) - len(incidents),
+                url=_https_url(item.get("url")),
             )
         )
     return services
 
 
-def summary_text(services: list[Service]) -> str:
-    """Plain lines for the model (and Slack's notification text): one per service."""
+def summary_text(services: list[Service], for_slack: bool = False) -> str:
+    """Plain lines for the model, one per service. `for_slack` escapes them for display."""
+    esc = escape if for_slack else (lambda text: text)
     lines = []
     for service in services:
-        line = f"- {service.name}: {service.label.lower()}"
+        line = f"- {esc(service.name)}: {service.label.lower()}"
         if service.description:
-            line += f" ({service.description})"
+            line += f" ({esc(service.description)})"
         for incident in service.incidents:
-            line += f"; incident: {incident.name} [{incident.status}]"
+            line += f"; incident: {esc(incident.name)} [{esc(incident.status)}]"
         lines.append(line)
     return "\n".join(lines)
 
 
-def build_blocks(services: list[Service], message: str = "", now: float | None = None) -> list[dict]:
-    """Block Kit for these services, worst first, under the model's own short answer."""
-    ordered = sorted(services, key=lambda s: -s.severity)[:MAX_SERVICES]
-    attention = sum(1 for s in ordered if s.severity)
+def build_message(services: list[Service], message: str = "", now: float | None = None) -> dict:
+    """The parts of a Slack message for these services: `blocks` (the answer) and `attachments` (the cards).
+
+    The answer is the model's own short reply, or a plain list when it wrote none, so the
+    text is never shown twice and never empty.
+    """
+    answer = defang(message.strip()) or summary_text(services, for_slack=True)
+    worst = max((s.severity for s in services), default=0)
+    return {
+        "blocks": [_section(answer[:MAX_SECTION_CHARS])],
+        "attachments": [{"color": _COLORS[worst], "blocks": build_card(services, now)}],
+    }
+
+
+def build_card(services: list[Service], now: float | None = None) -> list[dict]:
+    """The blocks inside the coloured attachment."""
+    ordered = sorted(services, key=lambda s: -s.severity)  # stable: ties keep the server's order
+    problems = [s for s in ordered if s.severity]
+    # One service is always shown in full; otherwise only problems are, and the rest is a grid.
+    detailed = ordered if len(ordered) == 1 else problems
+    healthy = [] if len(ordered) == 1 else [s for s in ordered if not s.severity]
     when = int(now if now is not None else time.time())
 
-    blocks: list[dict] = []
-    if message.strip():
-        blocks.append(_section(message.strip()[:MAX_SECTION_CHARS]))
-    title = {"type": "plain_text", "text": "\U0001f6a6 Service status", "emoji": True}
-    blocks.append({"type": "header", "text": title})
-    blocks.append(_context(_headline(len(ordered), attention)))
+    blocks: list[dict] = [_section(_title(len(ordered), len(problems), healthy))]
 
-    for service in ordered:
-        text = f"{service.emoji} *{escape(service.name)}* — {service.label}"
-        if service.description:
-            text += f"\n{escape(service.description)}"
-        blocks.append(_section(text))
+    for service in detailed[:MAX_PROBLEMS]:
+        blocks.append(_card(service))
         if service.incidents:
-            blocks.append({"type": "context", "elements": [_incident(i) for i in service.incidents]})
+            elements = [_incident(i) for i in service.incidents]
+            if service.more_incidents:
+                elements.append({"type": "mrkdwn", "text": f"_+{service.more_incidents} more_"})
+            blocks.append({"type": "context", "elements": elements})
+    if len(detailed) > MAX_PROBLEMS:
+        blocks.append(_context(f"…and {len(detailed) - MAX_PROBLEMS} more with issues"))
 
-    blocks.append(
-        _context(f"Live from each provider's public status page · updated <!date^{when}^{{time}}|just now>")
-    )
+    if problems and healthy:
+        shown = healthy[:MAX_OPERATIONAL]
+        for start in range(0, len(shown), MAX_FIELDS):
+            fields = [_field(f"{s.emoji} {escape(s.name)}") for s in shown[start : start + MAX_FIELDS]]
+            blocks.append({"type": "section", "fields": fields})
+        if len(healthy) > len(shown):
+            blocks.append(_context(f"…and {len(healthy) - len(shown)} more operational"))
+
+    blocks.append(_context(f"Live from each provider's public status page · updated <!date^{when}^{{time}}|just now>"))
     return blocks
+
+
+def _title(total: int, attention: int, healthy: list[Service]) -> str:
+    title = "\U0001f6a6 *Service status*"
+    if total == 1:
+        return title
+    if attention:
+        return f"{title} · {attention} of {total} need attention"
+    names = " · ".join(escape(s.name) for s in healthy)  # all healthy: the whole answer in one block
+    return f"{title} · all {total} operational\n{names}"[:MAX_SECTION_CHARS]
+
+
+def _card(service: Service) -> dict:
+    text = f"{service.emoji} *{escape(service.name)}* — {service.label}"
+    if service.description:
+        text += f"\n{escape(service.description)}"
+    block = _section(text)
+    if service.url:
+        block["accessory"] = {
+            "type": "button",
+            "text": {"type": "plain_text", "text": "Status page"},
+            "url": service.url,
+            "action_id": f"status_page_{service.id}"[:255],
+        }
+    return block
 
 
 def _incident(incident: Incident) -> dict:
@@ -154,11 +231,8 @@ def _incident(incident: Incident) -> dict:
     return {"type": "mrkdwn", "text": text}
 
 
-def _headline(total: int, attention: int) -> str:
-    noun = "service" if total == 1 else "services"
-    if not attention:
-        return f"All {total} {noun} operational" if total > 1 else "Operational"
-    return f"{attention} of {total} {noun} need attention"
+def _field(text: str) -> dict:
+    return {"type": "mrkdwn", "text": text}
 
 
 def _section(text: str) -> dict:
@@ -185,5 +259,6 @@ class StatusCards:
         by_id.update({s.id: s for s in services})
         self.services = list(by_id.values())
 
-    def blocks(self, message: str = "") -> list[dict] | None:
-        return build_blocks(self.services, message) if self.services else None
+    def message(self, answer: str = "") -> dict | None:
+        """`{"blocks": …, "attachments": …}` for the reply, or None if no status check ran."""
+        return build_message(self.services, answer) if self.services else None

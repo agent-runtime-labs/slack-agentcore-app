@@ -46,13 +46,14 @@ def build_status_tool(cards: StatusCards, url: str | None = None):
         return None
 
     def check_service_status(services: list[str] | None = None) -> str:
-        """Check whether public services such as GitHub, Cloudflare or Discord are up, down or having incidents.
+        """Check whether public services such as GitHub, Cloudflare, OpenAI or npm are up, down or having incidents.
 
-        Use this when the user asks if one of these services is down, slow or healthy, or asks for a
-        status check. It is not for the user's own account on a service.
+        Use this when the user asks if a public service is down, slow or healthy, or asks for a status
+        check. It is not for the user's own account on a service.
 
         Args:
-            services: Optional service ids to check: github, cloudflare, discord. Leave empty to check all.
+            services: Lowercase ids of the services the user named, e.g. ["github"] or ["twilio", "npm"].
+                Name them whenever the question is about specific services. Leave empty only to check all.
         """
         arguments = {"services": [s.strip().lower() for s in services if s and s.strip()]} if services else {}
         try:

@@ -104,7 +104,7 @@ def test_keeps_the_services_for_the_cards():
     _, cards = run()
 
     assert [(s.name, s.indicator) for s in cards.services] == [("GitHub", "none"), ("Discord", "major")]
-    assert cards.blocks("Discord is down.")[0]["text"]["text"] == "Discord is down."
+    assert cards.message("Discord is down.")["blocks"][0]["text"]["text"] == "Discord is down."
 
 
 def test_the_model_gets_a_summary_and_is_told_not_to_repeat_it():
@@ -129,7 +129,7 @@ def test_a_failing_server_gives_an_error_and_no_cards(fake_client, response):
     output, cards = run()
 
     assert output == "ERROR: could not reach the status service right now"
-    assert cards.blocks("x") is None
+    assert cards.message("x") is None
 
 
 @pytest.mark.parametrize("structured", [None, {}, {"services": []}, {"services": "nope"}])
@@ -139,4 +139,4 @@ def test_an_unusable_result_leaves_no_cards(fake_client, structured):
     output, cards = run(services=["nonesuch"])
 
     assert "no matching services" in output
-    assert cards.blocks("x") is None
+    assert cards.message("x") is None

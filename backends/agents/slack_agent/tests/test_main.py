@@ -223,11 +223,25 @@ def test_reply_carries_the_cards_under_the_models_answer(monkeypatch):
     assert result["message"] == "GitHub has an outage."
     assert result["authRequired"] is None
     assert result["blocks"][0]["text"]["text"] == "GitHub has an outage."
-    assert result["blocks"][1]["type"] == "header"
+    [attachment] = result["attachments"]
+    assert attachment["color"] == "#E8912D"
+    assert attachment["blocks"][0]["text"]["text"].startswith("\U0001f6a6 *Service status*")
 
 
-def test_reply_without_a_status_check_has_no_blocks_key():
-    assert "blocks" not in main.invoke(_payload(), SESSION)
+def test_reply_without_a_status_check_has_no_blocks_or_attachments():
+    result = main.invoke(_payload(), SESSION)
+
+    assert "blocks" not in result and "attachments" not in result
+
+
+def test_a_broadcast_the_model_copied_from_a_status_page_cannot_ping(monkeypatch):
+    _status_tool_that_found(monkeypatch, STATUS_RESULT)
+    FakeAgent.answer = "<!channel> GitHub has an outage."
+
+    result = main.invoke(_payload(), SESSION)
+
+    assert "<!channel>" not in result["message"]
+    assert "<!channel>" not in result["blocks"][0]["text"]["text"]
 
 
 def test_cards_never_leave_the_plain_text_reply_empty(monkeypatch):
@@ -237,4 +251,4 @@ def test_cards_never_leave_the_plain_text_reply_empty(monkeypatch):
     result = main.invoke(_payload(), SESSION)
 
     assert "- GitHub: major outage (Outage)" in result["message"]
-    assert result["blocks"][0]["type"] == "header"  # no empty answer block
+    assert result["blocks"][0]["text"]["text"] == result["message"]  # shown once, not above a duplicate

@@ -454,10 +454,8 @@ def test_triage_without_the_thread_still_sees_the_jobs_files(monkeypatch, slack)
 
 # --- Block Kit replies (service status cards) -------------------------------------------
 
-CARDS = [
-    {"type": "section", "text": {"type": "mrkdwn", "text": "GitHub is down."}},
-    {"type": "header", "text": {"type": "plain_text", "text": "Service status"}},
-]
+CARDS = [{"type": "section", "text": {"type": "mrkdwn", "text": "GitHub is down."}}]
+BAR = [{"color": "#E8912D", "blocks": [{"type": "section", "text": {"type": "mrkdwn", "text": "*Service status*"}}]}]
 
 
 def _reply_with(monkeypatch, **extra):
@@ -475,6 +473,22 @@ def test_blocks_replace_the_placeholder_with_the_text_as_fallback(monkeypatch, s
     ]
 
 
+def test_cards_in_a_colour_bar_go_out_with_the_blocks_and_the_text(monkeypatch, slack):
+    _reply_with(monkeypatch, blocks=CARDS, attachments=BAR)
+
+    assert _messages(slack.calls) == [
+        ("update", {"channel": "C123", "ts": "1.2", "text": "GitHub is down.", "blocks": CARDS, "attachments": BAR})
+    ]
+
+
+def test_attachments_alone_are_enough(monkeypatch, slack):
+    _reply_with(monkeypatch, attachments=BAR)
+
+    assert _messages(slack.calls) == [
+        ("update", {"channel": "C123", "ts": "1.2", "text": "GitHub is down.", "attachments": BAR})
+    ]
+
+
 @pytest.mark.parametrize("blocks", [None, [], "nope", {"type": "section"}, ["x"], [{"type": "divider"}] * 51])
 def test_unusable_blocks_are_ignored_and_the_text_goes_out_alone(monkeypatch, slack, blocks):
     _reply_with(monkeypatch, blocks=blocks)
@@ -482,15 +496,36 @@ def test_unusable_blocks_are_ignored_and_the_text_goes_out_alone(monkeypatch, sl
     assert _messages(slack.calls) == [("update", {"channel": "C123", "ts": "1.2", "text": "GitHub is down."})]
 
 
-def test_slack_rejecting_the_blocks_still_delivers_the_answer(monkeypatch, slack):
-    def reject_blocks(**kwargs):
-        if "blocks" in kwargs:
+@pytest.mark.parametrize(
+    "attachments",
+    [
+        None,
+        [],
+        "nope",
+        {"color": "x"},
+        ["x"],
+        [{"color": "#fff"}],
+        [{"color": "#fff", "blocks": []}],
+        [{"color": "#fff", "blocks": [{"type": "divider"}] * 51}],
+        BAR * 4,
+    ],
+)
+def test_unusable_attachments_are_ignored_and_the_text_goes_out_alone(monkeypatch, slack, attachments):
+    _reply_with(monkeypatch, attachments=attachments)
+
+    assert _messages(slack.calls) == [("update", {"channel": "C123", "ts": "1.2", "text": "GitHub is down."})]
+
+
+@pytest.mark.parametrize("rejected", ["blocks", "attachments"])
+def test_slack_rejecting_the_cards_still_delivers_the_answer(monkeypatch, slack, rejected):
+    def reject(**kwargs):
+        if rejected in kwargs:
             raise RuntimeError("invalid_blocks")
         slack.calls.append(("update", kwargs))
 
-    monkeypatch.setattr(slack, "chat_update", reject_blocks)
+    monkeypatch.setattr(slack, "chat_update", reject)
 
-    _reply_with(monkeypatch, blocks=CARDS)
+    _reply_with(monkeypatch, blocks=CARDS, attachments=BAR)
 
     assert _messages(slack.calls) == [("update", {"channel": "C123", "ts": "1.2", "text": "GitHub is down."})]
 
@@ -502,6 +537,7 @@ def test_blocks_are_not_sent_with_a_connect_request(monkeypatch, slack):
         lambda *a, **k: {
             "message": "x",
             "blocks": CARDS,
+            "attachments": BAR,
             "authRequired": {"provider": "LinkedIn", "authorizationUrl": "https://li/auth", "sessionUri": "urn:s1"},
         },
     )
@@ -509,5 +545,5 @@ def test_blocks_are_not_sent_with_a_connect_request(monkeypatch, slack):
     agent_worker.process(JOB)
 
     update = [kwargs for kind, kwargs in _messages(slack.calls) if kind == "update"][0]
-    assert "blocks" not in update
+    assert "blocks" not in update and "attachments" not in update
     assert "I need access" in update["text"]

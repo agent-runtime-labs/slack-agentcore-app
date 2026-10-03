@@ -233,7 +233,7 @@ flowchart LR
 
 - **One lazy tool per service.** GitHub, Linear and Notion each expose dozens of MCP tools. The main agent sees one `use_<service>(request)` tool, and a short-lived nested agent works through that service's tool catalogue only when someone asks about it.
 - **AuthState** is how any tool says "this user must connect first". `main.py` reads it after the agent loop and returns `authRequired` to the worker.
-- **Status cards** ([status-mcp.md](status-mcp.md)). `check_service_status` calls a public status MCP server directly (no nested agent, no token) and leaves the structured result on a per-request `StatusCards` holder. `main.py` turns it into Block Kit and returns it as an optional `blocks` field next to `message`; the worker passes it to `chat.update`, and falls back to the text if Slack rejects it.
+- **Status cards** ([status-mcp.md](status-mcp.md)). `check_service_status` calls a public status MCP server directly (no nested agent, no token) and leaves the structured result on a per-request `StatusCards` holder. `main.py` turns it into Block Kit (the model's answer as `blocks`, the cards as a colour-barred `attachments` entry) and returns both as optional fields next to `message`; the worker passes them to `chat.update`, and falls back to the text if Slack rejects them.
 - **Correct mode** (from triage) builds an agent with **no tools**. It can only point back to something the bot itself posted earlier in the thread.
 
 ### 2d. Team knowledge memory (optional)
