@@ -42,6 +42,7 @@ shows the result as Block Kit cards (status_mcp.py), when STATUSPULSE_MCP_URL is
 
 import logging
 import os
+from urllib.parse import urlsplit
 
 from bedrock_agentcore.runtime import BedrockAgentCoreApp, BedrockAgentCoreContext, RequestContext
 from strands import Agent
@@ -63,6 +64,15 @@ from web_fetch import build_fetch_url_tool
 
 logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO"))
 logger = logging.getLogger("slack_agent")
+
+
+def status_tool_state(url: str) -> str:
+    """For the startup log: whether the status tool is on. Only the host, as the URL may carry a tunnel name."""
+    return f"on ({urlsplit(url).netloc})" if url else "off (STATUSPULSE_MCP_URL is empty)"
+
+
+# Logged once at startup, so "the bot has no status tool" is answered by the first log line.
+logger.info("Service status tool: %s", status_tool_state(config.STATUSPULSE_MCP_URL))
 
 BASE_SYSTEM_PROMPT = """You are an AI assistant taking part in a Slack thread alongside people. Behave like a helpful
 colleague: add to the conversation, don't take it over.

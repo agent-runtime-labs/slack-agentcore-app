@@ -6,7 +6,7 @@ Ask the bot *"is GitHub down?"* and it answers in a sentence, followed by Slack 
 GitHub has a major outage; Cloudflare and Discord look fine.
 
 ▌🚦 Service status · 1 of 3 need attention          (bar: orange)
-▌🟠 GitHub — Major outage                           [Status page]
+▌🟠 GitHub — Major outage · Status page
 ▌Git Operations degraded
 ▌⚠️ Delayed webhook delivery · investigating
 ▌🟢 2 operational · Cloudflare · Discord
@@ -61,7 +61,7 @@ The model's answer is the message's own `blocks` (one section). Markdown `**bold
 |---|---|---|
 | The model's answer | `section` (message) | Capped at 3000 characters. If the model wrote nothing, a plain list of the services stands in, so the text never appears twice. |
 | Title and headline | `section` | `🚦 *Service status* · 2 of 10 need attention`. When all are healthy, the names follow on a second line and nothing else is drawn. |
-| A card per problem | `section` | `🟡 *Cloudflare* — Minor issues` and the provider's own description underneath, with a **Status page** link button when the server gave a URL. Up to 10; the rest are counted (`…and 2 more with issues`). |
+| A card per problem | `section` | `🟡 *Cloudflare* — Minor issues` and the provider's own description underneath, with a **Status page** link on the title line when the server gave a URL. Up to 10; the rest are counted (`…and 2 more with issues`). |
 | Incidents | `context` | Up to 3 per service: `⚠️ name · _status_`, then `_+N more_` if the server reported more. |
 | Healthy services | `section` | One wrapped line: `🟢 *11 operational* · GitHub · Discord · …`. Up to 20 names; the rest are counted. A single line looks the same in a narrow thread pane, where Slack stacks `fields` into one column. |
 | Footer | `context` | `<!date^…>` so each person sees the time in their own zone. |
@@ -161,11 +161,11 @@ The tool calls a server tool named `get_status`, with an optional `services` arg
 }
 ```
 
-Only `name` is required; the rest degrades gracefully (a missing indicator shows ⚪). `pageUrl` is the provider's public status page (StatusPulse sends the `page.url` of its `summary.json`): when it is a plain `https://` link the card gets a **Status page** button, otherwise no button is drawn. To add a service, add it **in the status server**, not here: the cards and the tool are generic, and the model is told to pass the ids the user names, so it needs no list of them. Refresh the server's tool list if it caches one.
+Only `name` is required; the rest degrades gracefully (a missing indicator shows ⚪). `pageUrl` is the provider's public status page (StatusPulse sends the `page.url` of its `summary.json`): when it is a plain `https://` link the title line gets a **Status page** link, otherwise no link is drawn. It is a plain Slack link on purpose, not a button: Slack sends every button click (even a URL button) to the app's Interactivity URL and shows a ⚠️ on it when none is set. To add a service, add it **in the status server**, not here: the cards and the tool are generic, and the model is told to pass the ids the user names, so it needs no list of them. Refresh the server's tool list if it caches one.
 
 ## Security
 
-- **Status pages are third-party text.** Incident names and descriptions can say anything. In the cards they are escaped (`&`, `<`, `>`) so a name like `<!channel>` or a spoofed link shows as literal text and can't ping or link, collapsed to one line, and truncated. The indicator is matched against a fixed list, and a button is only made for a plain `https://` URL. The text the model sees is wrapped with an instruction to treat it as data, and the system prompt repeats it. Because the model may still copy an incident name into its answer, the `<!` that starts `<!channel>`, `<!here>` and `<!everyone>` is neutralised in the answer and in the notification text too.
+- **Status pages are third-party text.** Incident names and descriptions can say anything. In the cards they are escaped (`&`, `<`, `>`) so a name like `<!channel>` or a spoofed link shows as literal text and can't ping or link, collapsed to one line, and truncated. The indicator is matched against a fixed list, and a link is only made for a plain `https://` URL without `<`, `>` or `|`. The text the model sees is wrapped with an instruction to treat it as data, and the system prompt repeats it. Because the model may still copy an incident name into its answer, the `<!` that starts `<!channel>`, `<!here>` and `<!everyone>` is neutralised in the answer and in the notification text too.
 - **No credentials, no user data.** The server is public and the tool sends nothing about the Slack user, so there is no per-user token to isolate. Don't point `STATUSPULSE_MCP_URL` at a server that expects the user's identity; use a `cimd/` provider for that.
 - **The URL is operator configuration**, set in Terraform or `.env`, never taken from a message, so users cannot make the agent call arbitrary addresses through this tool. (`fetch_url` is different: it takes user links and has its own SSRF guards.)
 - **Failure is quiet.** If the server is down, the tool returns `ERROR: could not reach the status service right now` and the model says so in a line. There are no cards, because nothing was verified.
@@ -186,12 +186,12 @@ make test
 
 | File | Covers |
 |---|---|
-| `tests/test_status_cards.py` | Parsing, sort-before-cap, problem cards vs the healthy line, button and bar colour, block limits, escaping of untrusted text, the per-request holder. |
+| `tests/test_status_cards.py` | Parsing, sort-before-cap, problem cards vs the healthy line, link and bar colour, block limits, escaping of untrusted text, the per-request holder. |
 | `tests/test_status_mcp.py` | What the tool asks the server, what it keeps, and every failure path, with the MCP client faked. |
 | `tests/test_main.py` | The tool and prompt rule appear only when configured; `blocks`, `attachments` and a non-empty `message` come back; broadcasts are defanged. |
 | `lambdas/tests/test_agent_worker.py` | Blocks and attachments reach `chat.update`; unusable ones are dropped; a Slack rejection falls back to text. |
 
 ## Ideas, not built
 
-- A **Refresh** button on the cards. Slack buttons that call back need an Interactivity Request URL and a signed handler on the API Gateway, which this app doesn't have yet (link buttons need neither).
+- A **Refresh** button on the cards. Slack buttons that call back need an Interactivity Request URL and a signed handler on the API Gateway, which this app doesn't have yet (a plain link needs neither, which is why the status page is a link and not a button).
 - Reusing the `blocks` and `attachments` fields for other tools, such as a Linear issue list. Add a holder and a builder next to `status_cards.py`; the worker needs no change.

@@ -105,13 +105,14 @@ def test_parsing_caps_the_number_of_services():
     assert len(services_of(*[raw(f"S{i}") for i in range(MAX_SERVICES + 5)])) == MAX_SERVICES
 
 
-def test_only_plain_https_urls_become_links():
+def test_only_plain_https_urls_without_slack_control_characters_become_links():
     good = "https://www.githubstatus.com"
-    urls = [good, "http://insecure.example", "javascript:alert(1)", "https://a b", "", None, 5]
+    bad = ["http://insecure.example", "javascript:alert(1)", "https://a b", "https://x.example/>|<!channel>", "", None, 5]
+    urls = [good, *bad]
 
     got = [s.url for s in services_of(*[raw(f"S{i}", pageUrl=u) for i, u in enumerate(urls)])]
 
-    assert got == [good, "", "", "", "", "", ""]
+    assert got == [good, "", "", "", "", "", "", ""]
 
 
 # --- layout ----------------------------------------------------------------------------
@@ -162,21 +163,25 @@ def test_incidents_go_in_a_context_block_under_their_service_with_a_count_of_the
     assert elements == [f"⚠️ inc{i} · _investigating_" for i in range(3)] + ["_+2 more_"]
 
 
-def test_a_status_page_link_becomes_a_button_on_the_card():
+def test_a_status_page_link_goes_on_the_title_line_and_is_not_a_button():
     [_, section, *_] = card(raw("GitHub", "minor", "Degraded", pageUrl="https://www.githubstatus.com"), raw("npm"))
 
-    assert section["accessory"] == {
-        "type": "button",
-        "text": {"type": "plain_text", "text": "Status page"},
-        "url": "https://www.githubstatus.com",
-        "action_id": "status_page_github",
-    }
+    assert section["text"]["text"] == (
+        "\U0001f7e1 *GitHub* — Minor issues · <https://www.githubstatus.com|Status page>\nDegraded"
+    )
+    assert "accessory" not in section  # buttons make Slack ask for an Interactivity URL
 
 
-def test_no_url_means_no_button():
+def test_no_url_means_no_link():
     [_, section, *_] = card(raw("GitHub", "minor", "Degraded"), raw("npm"))
 
-    assert "accessory" not in section
+    assert section["text"]["text"] == "\U0001f7e1 *GitHub* — Minor issues\nDegraded"
+
+
+def test_a_url_is_escaped_inside_the_link():
+    [_, section, *_] = card(raw("GitHub", "minor", "x", pageUrl="https://s.example/?a=1&b=2"), raw("npm"))
+
+    assert "<https://s.example/?a=1&amp;b=2|Status page>" in section["text"]["text"]
 
 
 def test_the_message_is_the_models_answer_plus_a_coloured_attachment():

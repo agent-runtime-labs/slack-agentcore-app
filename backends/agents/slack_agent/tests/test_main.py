@@ -205,6 +205,11 @@ def test_status_tool_is_added_only_when_configured(monkeypatch):
     assert created[1].kwargs["tools"][-1] == "status-tool"
 
 
+def test_the_startup_log_says_whether_the_status_tool_is_on_without_the_full_url():
+    assert main.status_tool_state("") == "off (STATUSPULSE_MCP_URL is empty)"
+    assert main.status_tool_state("https://abc.ngrok-free.app/mcp?k=1") == "on (abc.ngrok-free.app)"
+
+
 def test_status_rule_is_in_the_prompt_only_when_configured(monkeypatch):
     monkeypatch.setattr(main.config, "STATUSPULSE_MCP_URL", "")
     assert "check_service_status" not in main._system_prompt()

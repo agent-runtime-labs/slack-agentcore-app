@@ -5,10 +5,10 @@ sentences; this module turns the structured result into the message around them:
 
     <the model's short answer>
     ▌🚦 Service status · 2 of 10 need attention                  (bar: red/orange/amber/green)
-    ▌🟡 Cloudflare — Minor issues                      [Status page]
+    ▌🟡 Cloudflare — Minor issues · Status page
     ▌Minor Service Outage
     ▌⚠️ Workers Build failing to start · investigating
-    ▌🟡 Twilio — Minor issues                          [Status page]
+    ▌🟡 Twilio — Minor issues · Status page
     ▌🟢 11 operational · GitHub · Discord · OpenAI · Claude · npm …   (healthy services: one line)
     ▌Live from each provider's public status page · updated 10:42
 
@@ -17,8 +17,8 @@ of names, and when everything is healthy the whole thing is two lines. The cards
 attachment, which is what gives the message its colour bar.
 
 Everything that comes from a status page is third-party text. It is escaped for Slack (so
-`<!channel>` or a spoofed link can't fire), whitespace-collapsed and truncated, a link
-button is only made for an https URL, and an unrecognised indicator never reaches the
+`<!channel>` or a spoofed link can't fire), whitespace-collapsed and truncated, a status
+page link is only made for an https URL without `<`, `>` or `|`, and an unrecognised indicator never reaches the
 output as-is.
 
 Nothing here touches the network or Slack, so it is cheap to test.
@@ -103,9 +103,9 @@ def clean(value: object, limit: int = MAX_TEXT_CHARS) -> str:
 
 
 def _https_url(value: object) -> str:
-    """The URL if it is a plain https link a button can safely open, else ''."""
+    """The URL if it is a plain https link that can sit inside a Slack `<url|label>` safely, else ''."""
     url = value.strip() if isinstance(value, str) else ""
-    ok = url.startswith("https://") and len(url) <= MAX_URL_CHARS and not any(c.isspace() for c in url)
+    ok = url.startswith("https://") and len(url) <= MAX_URL_CHARS and not any(c.isspace() or c in "<>|" for c in url)
     return url if ok else ""
 
 
@@ -218,17 +218,13 @@ def _operational(healthy: list[Service]) -> str:
 
 def _card(service: Service) -> dict:
     text = f"{service.emoji} *{escape(service.name)}* — {service.label}"
+    if service.url:
+        # A plain link, not a button: Slack sends every button click to the app's Interactivity URL,
+        # even a URL button, and shows a warning icon on it when none is configured.
+        text += f" · <{escape(service.url)}|Status page>"
     if service.description:
         text += f"\n{escape(service.description)}"
-    block = _section(text)
-    if service.url:
-        block["accessory"] = {
-            "type": "button",
-            "text": {"type": "plain_text", "text": "Status page"},
-            "url": service.url,
-            "action_id": f"status_page_{service.id}"[:255],
-        }
-    return block
+    return _section(text)
 
 
 def _incident(incident: Incident) -> dict:
