@@ -136,7 +136,7 @@ def parse_services(structured: object) -> list[Service]:
                 description=clean(item.get("description")),
                 incidents=incidents,
                 more_incidents=len(named) - len(incidents),
-                url=_https_url(item.get("url")),
+                url=_https_url(item.get("pageUrl")),
             )
         )
     return services

@@ -62,7 +62,7 @@ def types(blocks):
 def test_parses_a_statuspulse_result():
     services = services_of(
         raw(incidents=[{"name": "Delayed webhooks", "impact": "minor", "status": "investigating"}]),
-        raw("Discord", "major", "Partial Outage", url="https://discordstatus.com"),
+        raw("Discord", "major", "Partial Outage", pageUrl="https://discordstatus.com"),
     )
 
     assert [s.name for s in services] == ["GitHub", "Discord"]
@@ -109,7 +109,7 @@ def test_only_plain_https_urls_become_links():
     good = "https://www.githubstatus.com"
     urls = [good, "http://insecure.example", "javascript:alert(1)", "https://a b", "", None, 5]
 
-    got = [s.url for s in services_of(*[raw(f"S{i}", url=u) for i, u in enumerate(urls)])]
+    got = [s.url for s in services_of(*[raw(f"S{i}", pageUrl=u) for i, u in enumerate(urls)])]
 
     assert got == [good, "", "", "", "", "", ""]
 
@@ -163,7 +163,7 @@ def test_incidents_go_in_a_context_block_under_their_service_with_a_count_of_the
 
 
 def test_a_status_page_link_becomes_a_button_on_the_card():
-    [_, section, *_] = card(raw("GitHub", "minor", "Degraded", url="https://www.githubstatus.com"), raw("npm"))
+    [_, section, *_] = card(raw("GitHub", "minor", "Degraded", pageUrl="https://www.githubstatus.com"), raw("npm"))
 
     assert section["accessory"] == {
         "type": "button",
@@ -208,7 +208,7 @@ def test_without_a_model_answer_the_plain_summary_is_the_answer_block():
 
 def test_stays_well_inside_slacks_limits_however_much_the_server_returns():
     incidents = [{"name": f"i{j}", "status": "s"} for j in range(9)]
-    items = [raw(f"Bad{i}", "minor", "x", incidents, url="https://x.example") for i in range(20)]
+    items = [raw(f"Bad{i}", "minor", "x", incidents, pageUrl="https://x.example") for i in range(20)]
     items += [raw(f"Ok{i}") for i in range(20)]
 
     message = build_message(services_of(*items), "x" * 10_000, NOW)

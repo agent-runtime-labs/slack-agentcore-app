@@ -154,14 +154,14 @@ The tool calls a server tool named `get_status`, with an optional `services` arg
       "indicator": "none | minor | major | critical",
       "description": "All Systems Operational",
       "incidents": [{ "name": "Delayed webhooks", "impact": "minor", "status": "investigating" }],
-      "url": "https://www.githubstatus.com",
+      "pageUrl": "https://www.githubstatus.com",
       "updatedAt": "2026-10-03T05:12:00Z"
     }
   ]
 }
 ```
 
-Only `name` is required; the rest degrades gracefully (a missing indicator shows ⚪). `url` is the provider's public status page: when it is a plain `https://` link the card gets a **Status page** button, otherwise no button is drawn. For a Statuspage-based provider it is the `page.url` of its `summary.json`. To add a service, add it **in the status server**, not here: the cards and the tool are generic, and the model is told to pass the ids the user names, so it needs no list of them. Refresh the server's tool list if it caches one.
+Only `name` is required; the rest degrades gracefully (a missing indicator shows ⚪). `pageUrl` is the provider's public status page (StatusPulse sends the `page.url` of its `summary.json`): when it is a plain `https://` link the card gets a **Status page** button, otherwise no button is drawn. To add a service, add it **in the status server**, not here: the cards and the tool are generic, and the model is told to pass the ids the user names, so it needs no list of them. Refresh the server's tool list if it caches one.
 
 ## Security
 
