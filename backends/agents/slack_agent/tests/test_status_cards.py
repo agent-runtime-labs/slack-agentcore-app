@@ -6,7 +6,6 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from status_cards import (  # noqa: E402
-    MAX_FIELDS,
     MAX_OPERATIONAL,
     MAX_PROBLEMS,
     MAX_SERVICES,
@@ -16,6 +15,7 @@ from status_cards import (  # noqa: E402
     defang,
     escape,
     parse_services,
+    slack_text,
     summary_text,
 )
 
@@ -117,7 +117,7 @@ def test_only_plain_https_urls_become_links():
 # --- layout ----------------------------------------------------------------------------
 
 
-def test_problems_get_full_cards_worst_first_and_healthy_ones_a_grid():
+def test_problems_get_full_cards_worst_first_and_healthy_ones_one_line():
     blocks = card(
         raw("Discord"),
         raw("GitHub", "critical", "Major Outage"),
@@ -126,11 +126,12 @@ def test_problems_get_full_cards_worst_first_and_healthy_ones_a_grid():
     )
 
     assert types(blocks) == ["section", "section", "section", "section", "context"]
-    title, first, second, grid, _footer = texts(blocks)[0], blocks[1], blocks[2], blocks[3], blocks[4]
+    title, first, second, healthy = texts(blocks)[0], blocks[1], blocks[2], blocks[3]
     assert title == "\U0001f6a6 *Service status* · 2 of 4 need attention"
     assert first["text"]["text"] == "\U0001f534 *GitHub* — Critical outage\nMajor Outage"
     assert second["text"]["text"].startswith("\U0001f7e1 *Cloudflare*")
-    assert [f["text"] for f in grid["fields"]] == ["\U0001f7e2 Discord", "\U0001f7e2 npm"]
+    assert healthy["text"]["text"] == "\U0001f7e2 *2 operational* · Discord · npm"
+    assert not any("fields" in b for b in blocks)  # fields stack into one column in a narrow thread pane
     assert f"<!date^{NOW}^{{time}}|just now>" in texts(blocks)[-1]
 
 
@@ -178,13 +179,6 @@ def test_no_url_means_no_button():
     assert "accessory" not in section
 
 
-def test_the_grid_is_split_into_sections_of_at_most_ten_fields():
-    blocks = card(raw("Bad", "minor", "x"), *[raw(f"Ok{i}") for i in range(MAX_FIELDS + 3)])
-
-    grids = [b for b in blocks if "fields" in b]
-    assert [len(g["fields"]) for g in grids] == [MAX_FIELDS, 3]
-
-
 def test_the_message_is_the_models_answer_plus_a_coloured_attachment():
     message = build_message(services_of(raw(), raw("Cloudflare", "major", "Outage")), "  Cloudflare is down.  ", NOW)
 
@@ -222,7 +216,6 @@ def test_stays_well_inside_slacks_limits_however_much_the_server_returns():
     [attachment] = message["attachments"]
     assert len(attachment["blocks"]) + len(message["blocks"]) <= 50
     assert all(len(t) <= 3000 for t in texts(attachment["blocks"]) + texts(message["blocks"]))
-    assert all(len(b["fields"]) <= MAX_FIELDS for b in attachment["blocks"] if "fields" in b)
 
 
 def test_a_problem_late_in_a_long_list_is_not_lost_to_the_cap():
@@ -241,7 +234,8 @@ def test_overflow_is_summarised_not_dropped_silently():
     assert any(t == "…and 2 more with issues" for t in texts(card(*items)))
 
     many_ok = [raw("Bad", "minor", "x")] + [raw(f"Ok{i}") for i in range(MAX_OPERATIONAL + 4)]
-    assert any(t == "…and 4 more operational" for t in texts(card(*many_ok)))
+    line = next(t for t in texts(card(*many_ok)) if "operational" in t)
+    assert line.endswith("· …and 4 more") and line.startswith("\U0001f7e2 *24 operational*")
 
 
 # --- untrusted text --------------------------------------------------------------------
@@ -272,6 +266,10 @@ def test_status_page_text_cannot_ping_or_link():
     for control in ("<!channel>", "<!here>", "<!everyone>", "<@U123>", "<https://evil.example|this>"):
         assert control not in joined
     assert "&lt;!channel&gt;" in joined
+
+
+def test_slack_text_turns_markdown_bold_into_slack_bold():
+    assert slack_text("**Cloudflare** and **Twilio** are *fine*") == "*Cloudflare* and *Twilio* are *fine*"
 
 
 def test_the_models_answer_cannot_ping_either():

@@ -234,6 +234,16 @@ def test_reply_without_a_status_check_has_no_blocks_or_attachments():
     assert "blocks" not in result and "attachments" not in result
 
 
+def test_markdown_bold_from_the_model_becomes_slack_bold(monkeypatch):
+    _status_tool_that_found(monkeypatch, STATUS_RESULT)
+    FakeAgent.answer = "**GitHub** has an outage."
+
+    result = main.invoke(_payload(), SESSION)
+
+    assert result["message"] == "*GitHub* has an outage."
+    assert result["blocks"][0]["text"]["text"] == "*GitHub* has an outage."
+
+
 def test_a_broadcast_the_model_copied_from_a_status_page_cannot_ping(monkeypatch):
     _status_tool_that_found(monkeypatch, STATUS_RESULT)
     FakeAgent.answer = "<!channel> GitHub has an outage."

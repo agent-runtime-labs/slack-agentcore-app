@@ -1,6 +1,6 @@
 # Service Status Cards (public MCP server → Block Kit)
 
-Ask the bot *"is GitHub down?"* and it answers in a sentence, followed by Slack Block Kit cards with a coloured bar and a dot per service. Only services with a problem get a full card; healthy ones are a compact grid:
+Ask the bot *"is GitHub down?"* and it answers in a sentence, followed by Slack Block Kit cards with a coloured bar and a dot per service. Only services with a problem get a full card; healthy ones are one line of names:
 
 ```
 GitHub has a major outage; Cloudflare and Discord look fine.
@@ -9,7 +9,7 @@ GitHub has a major outage; Cloudflare and Discord look fine.
 ▌🟠 GitHub — Major outage                           [Status page]
 ▌Git Operations degraded
 ▌⚠️ Delayed webhook delivery · investigating
-▌🟢 Cloudflare       🟢 Discord
+▌🟢 2 operational · Cloudflare · Discord
 ▌Live from each provider's public status page · updated 10:42
 ```
 
@@ -55,7 +55,7 @@ Three design points:
 
 ## What the cards look like
 
-The model's answer is the message's own `blocks` (one section). The cards sit in one **attachment**, because an attachment is the only way Slack draws a coloured bar down the side.
+The model's answer is the message's own `blocks` (one section). Markdown `**bold**` in it is turned into Slack's `*bold*`, and the system prompt asks for the latter. The cards sit in one **attachment**, because an attachment is the only way Slack draws a coloured bar down the side.
 
 | Piece | Block | Notes |
 |---|---|---|
@@ -63,7 +63,7 @@ The model's answer is the message's own `blocks` (one section). The cards sit in
 | Title and headline | `section` | `🚦 *Service status* · 2 of 10 need attention`. When all are healthy, the names follow on a second line and nothing else is drawn. |
 | A card per problem | `section` | `🟡 *Cloudflare* — Minor issues` and the provider's own description underneath, with a **Status page** link button when the server gave a URL. Up to 10; the rest are counted (`…and 2 more with issues`). |
 | Incidents | `context` | Up to 3 per service: `⚠️ name · _status_`, then `_+N more_` if the server reported more. |
-| Healthy services | `section` with `fields` | Two columns, `🟢 GitHub`. Up to 20 names; the rest are counted. |
+| Healthy services | `section` | One wrapped line: `🟢 *11 operational* · GitHub · Discord · …`. Up to 20 names; the rest are counted. A single line looks the same in a narrow thread pane, where Slack stacks `fields` into one column. |
 | Footer | `context` | `<!date^…>` so each person sees the time in their own zone. |
 
 A **single service** (a question about one provider) is always shown as a full card, healthy or not.
@@ -80,7 +80,7 @@ Problems are **sorted worst first**, so one is never below the fold. Services ar
 | `critical` | 🔴 | Critical outage |
 | anything else, or missing | ⚪ | Status unknown (sorted with the problems) |
 
-The worst case (10 problems with incidents plus a full grid) is about 27 blocks, well under Slack's limit of 50. To preview or tweak the layout, paste the `blocks` of the attachment from the agent's log into [Block Kit Builder](https://app.slack.com/block-kit-builder).
+The worst case (10 problems with incidents plus the healthy line) is about 27 blocks, well under Slack's limit of 50. To preview or tweak the layout, paste the `blocks` of the attachment from the agent's log into [Block Kit Builder](https://app.slack.com/block-kit-builder).
 
 ## Set it up
 
@@ -129,7 +129,7 @@ Then `make deploy`. The value must be empty or an `https://` URL (Terraform chec
 | Ask | Expect |
 |---|---|
 | "Is GitHub down?" | One sentence, then a card for GitHub only. |
-| "Check all services" | Full cards for the ones with problems, a grid for the rest, a bar coloured by the worst. |
+| "Check all services" | Full cards for the ones with problems, one line of names for the rest, a bar coloured by the worst. |
 | "Is Cloudflare or Discord having incidents?" | Two cards. |
 | "What is my GitHub username?" | The GitHub tool, not this one: this tool is for public status only. |
 
@@ -186,7 +186,7 @@ make test
 
 | File | Covers |
 |---|---|
-| `tests/test_status_cards.py` | Parsing, sort-before-cap, problem cards vs grid, button and bar colour, block limits, escaping of untrusted text, the per-request holder. |
+| `tests/test_status_cards.py` | Parsing, sort-before-cap, problem cards vs the healthy line, button and bar colour, block limits, escaping of untrusted text, the per-request holder. |
 | `tests/test_status_mcp.py` | What the tool asks the server, what it keeps, and every failure path, with the MCP client faked. |
 | `tests/test_main.py` | The tool and prompt rule appear only when configured; `blocks`, `attachments` and a non-empty `message` come back; broadcasts are defanged. |
 | `lambdas/tests/test_agent_worker.py` | Blocks and attachments reach `chat.update`; unusable ones are dropped; a Slack rejection falls back to text. |

@@ -9,12 +9,11 @@ sentences; this module turns the structured result into the message around them:
     ▌Minor Service Outage
     ▌⚠️ Workers Build failing to start · investigating
     ▌🟡 Twilio — Minor issues                          [Status page]
-    ▌🟢 GitHub        🟢 Discord                       (healthy services: two-column grid)
-    ▌🟢 OpenAI        🟢 Claude
+    ▌🟢 11 operational · GitHub · Discord · OpenAI · Claude · npm …   (healthy services: one line)
     ▌Live from each provider's public status page · updated 10:42
 
-Only services with a problem get a full card, worst first; healthy ones are a compact grid,
-and when everything is healthy the whole thing is two lines. The cards sit in a Slack
+Only services with a problem get a full card, worst first; healthy ones are one wrapped line
+of names, and when everything is healthy the whole thing is two lines. The cards sit in a Slack
 attachment, which is what gives the message its colour bar.
 
 Everything that comes from a status page is third-party text. It is escaped for Slack (so
@@ -25,16 +24,16 @@ output as-is.
 Nothing here touches the network or Slack, so it is cheap to test.
 """
 
+import re
 import time
 from dataclasses import dataclass, field
 
 MAX_SERVICES = 30  # how many a result may hold; extra entries are ignored
 MAX_PROBLEMS = 10  # full cards shown (worst first)
-MAX_OPERATIONAL = 20  # names shown in the healthy grid
+MAX_OPERATIONAL = 20  # names shown in the healthy line
 MAX_INCIDENTS = 3
 MAX_TEXT_CHARS = 300
 MAX_SECTION_CHARS = 3000  # Slack's limit for the text of one section block
-MAX_FIELDS = 10  # Slack's limit for the fields of one section block
 MAX_URL_CHARS = 2000
 
 # indicator -> (emoji, label, severity). Statuspage's own indicator names.
@@ -90,6 +89,11 @@ def defang(text: str) -> str:
     Only the `<!` that starts them is changed, so the model's own *bold*, links and mentions work.
     """
     return text.replace("<!", "&lt;!")
+
+
+def slack_text(text: str) -> str:
+    """A model's answer made safe and readable for Slack: no broadcasts, and **bold** as Slack's *bold*."""
+    return re.sub(r"\*\*(.+?)\*\*", r"*\1*", defang(text))
 
 
 def clean(value: object, limit: int = MAX_TEXT_CHARS) -> str:
@@ -158,7 +162,7 @@ def build_message(services: list[Service], message: str = "", now: float | None 
     The answer is the model's own short reply, or a plain list when it wrote none, so the
     text is never shown twice and never empty.
     """
-    answer = defang(message.strip()) or summary_text(services, for_slack=True)
+    answer = slack_text(message.strip()) or summary_text(services, for_slack=True)
     worst = max((s.severity for s in services), default=0)
     return {
         "blocks": [_section(answer[:MAX_SECTION_CHARS])],
@@ -170,7 +174,7 @@ def build_card(services: list[Service], now: float | None = None) -> list[dict]:
     """The blocks inside the coloured attachment."""
     ordered = sorted(services, key=lambda s: -s.severity)  # stable: ties keep the server's order
     problems = [s for s in ordered if s.severity]
-    # One service is always shown in full; otherwise only problems are, and the rest is a grid.
+    # One service is always shown in full; otherwise only problems are, and the rest is one line.
     detailed = ordered if len(ordered) == 1 else problems
     healthy = [] if len(ordered) == 1 else [s for s in ordered if not s.severity]
     when = int(now if now is not None else time.time())
@@ -188,12 +192,7 @@ def build_card(services: list[Service], now: float | None = None) -> list[dict]:
         blocks.append(_context(f"…and {len(detailed) - MAX_PROBLEMS} more with issues"))
 
     if problems and healthy:
-        shown = healthy[:MAX_OPERATIONAL]
-        for start in range(0, len(shown), MAX_FIELDS):
-            fields = [_field(f"{s.emoji} {escape(s.name)}") for s in shown[start : start + MAX_FIELDS]]
-            blocks.append({"type": "section", "fields": fields})
-        if len(healthy) > len(shown):
-            blocks.append(_context(f"…and {len(healthy) - len(shown)} more operational"))
+        blocks.append(_section(_operational(healthy)))
 
     blocks.append(_context(f"Live from each provider's public status page · updated <!date^{when}^{{time}}|just now>"))
     return blocks
@@ -207,6 +206,14 @@ def _title(total: int, attention: int, healthy: list[Service]) -> str:
         return f"{title} · {attention} of {total} need attention"
     names = " · ".join(escape(s.name) for s in healthy)  # all healthy: the whole answer in one block
     return f"{title} · all {total} operational\n{names}"[:MAX_SECTION_CHARS]
+
+
+def _operational(healthy: list[Service]) -> str:
+    """One wrapped line for the healthy services: it reads the same in a narrow thread pane as in a wide one."""
+    shown = healthy[:MAX_OPERATIONAL]
+    names = " · ".join(escape(s.name) for s in shown)
+    more = f" · …and {len(healthy) - len(shown)} more" if len(healthy) > len(shown) else ""
+    return f"\U0001f7e2 *{len(healthy)} operational* · {names}{more}"[:MAX_SECTION_CHARS]
 
 
 def _card(service: Service) -> dict:
@@ -228,10 +235,6 @@ def _incident(incident: Incident) -> dict:
     text = f"⚠️ {escape(incident.name)}"
     if incident.status:
         text += f" · _{escape(incident.status)}_"
-    return {"type": "mrkdwn", "text": text}
-
-
-def _field(text: str) -> dict:
     return {"type": "mrkdwn", "text": text}
 
 
