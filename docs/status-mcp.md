@@ -20,6 +20,8 @@ When everything is healthy it is two lines and a green bar:
 ▌GitHub · Cloudflare · Discord
 ```
 
+<p align="center"><img src="assets/status-cards.png" alt="The bot's reply in a Slack thread: a two-sentence verdict, then an amber-barred card with Cloudflare and Twilio incidents, a Status page link on each, and one line listing the 11 operational services" width="640"></p>
+
 The data comes from a **public MCP server** that reads providers' status pages. This guide uses **StatusPulse**, a small MCP server with one tool, `get_status`, that checks a list of providers (GitHub, Cloudflare, Discord and more). Any server that exposes the same tool and result shape works (see [the contract](#the-server-contract)).
 
 It is the first tool that needs **no sign-in**, so it follows none of the OAuth paths in [identity-and-security.md](identity-and-security.md): no consent link, no token vault, no per-user state.
