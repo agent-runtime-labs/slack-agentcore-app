@@ -46,6 +46,13 @@ CIMD_MODEL_ID = os.getenv("CIMD_MODEL_ID", GITHUB_MODEL_ID)
 # and the user is asked to reconnect.
 CIMD_CONNECTION_TTL_DAYS = int(os.getenv("CIMD_CONNECTION_TTL_DAYS", "90"))
 
+# --- Public service status (see status_mcp.py and docs/status-mcp.md) ---------------
+
+# The streamable-HTTP URL of a status MCP server such as StatusPulse, e.g.
+# https://status.example.com/mcp. It is public and needs no sign-in. Empty disables
+# the check_service_status tool.
+STATUSPULSE_MCP_URL = os.getenv("STATUSPULSE_MCP_URL", "").strip()
+
 # --- Team knowledge memory (see past_threads.py and docs/architecture.md) -------------
 
 # The S3 Vectors index the knowledge indexer writes thread summaries to. Empty disables

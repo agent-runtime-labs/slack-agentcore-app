@@ -15,6 +15,20 @@
 | `send-test-mention` returns 401 | Signing secret mismatch | The script and the pod both read `SLACK_SIGNING_SECRET`; restart Tilt after changing `.env`. |
 | `docker buildx` fails with `/var/run/docker.sock` | buildx is pointing at the `default` builder | `docker buildx use rancher-desktop` (or your engine's builder). |
 
+## Service status cards
+
+See [status-mcp.md](status-mcp.md) for how the feature works.
+
+| Symptom | Cause | Fix |
+|---|---|---|
+| The bot answers "is GitHub down?" in plain text, with no cards and no tool call | `STATUSPULSE_MCP_URL` is empty where the agent runs, so the tool and its prompt line are off | Set it in `.env` (restart Tilt) or `statuspulse_mcp_url` in the tfvars (`make deploy`). |
+| "I couldn't reach the status service right now" | The agent can't open the URL: the tunnel stopped or its address changed, the server is down, or the path isn't `/mcp` | Open the URL in MCP Inspector (Streamable HTTP). With ngrok, update the URL after every restart. |
+| Terraform: `statuspulse_mcp_url must be empty or an https:// URL` | A plain `http://` or non-URL value | Use the server's public `https://` address. |
+| Cards missing but the sentence is there | The tool didn't run, or the server returned no `structuredContent.services` | Check the agent log for a `check_service_status` call, and run `get_status` in MCP Inspector: the result must include `structuredContent`. |
+| Plain text appears with no formatting in Slack, and the worker log says `Slack rejected the blocks` | Slack refused the Block Kit (a field over its limits, or a malformed block) | The answer was still delivered as text. Copy the `blocks` from the log into [Block Kit Builder](https://app.slack.com/block-kit-builder) to see which block it dislikes, then fix `status_cards.py`. |
+| A service shows ⚪ *Status unknown* | The provider's status page was unreachable, or reported an indicator we don't know | Test the provider's `/api/v2/summary.json` with `curl`. Unknown indicators are shown as unknown on purpose. |
+| The model lists every service again after the cards | The model ignored the instruction in the tool result | Tighten `MODEL_NOTE` in `status_mcp.py` or `STATUS_RULE` in `main.py`. |
+
 ## Files and links
 
 | Symptom | Cause | Fix |

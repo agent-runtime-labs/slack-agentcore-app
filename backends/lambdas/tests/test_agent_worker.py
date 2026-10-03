@@ -450,3 +450,64 @@ def test_triage_without_the_thread_still_sees_the_jobs_files(monkeypatch, slack)
     agent_worker.process({**TRIAGE_JOB, "files": [SCREENSHOT]})
 
     assert seen["text"] == "how do I connect Notion? [attached: error.png (80 KB)]"
+
+
+# --- Block Kit replies (service status cards) -------------------------------------------
+
+CARDS = [
+    {"type": "section", "text": {"type": "mrkdwn", "text": "GitHub is down."}},
+    {"type": "header", "text": {"type": "plain_text", "text": "Service status"}},
+]
+
+
+def _reply_with(monkeypatch, **extra):
+    monkeypatch.setattr(
+        agent_worker, "invoke_agent", lambda *a, **k: {"message": "GitHub is down.", "authRequired": None, **extra}
+    )
+    agent_worker.process(JOB)
+
+
+def test_blocks_replace_the_placeholder_with_the_text_as_fallback(monkeypatch, slack):
+    _reply_with(monkeypatch, blocks=CARDS)
+
+    assert _messages(slack.calls) == [
+        ("update", {"channel": "C123", "ts": "1.2", "text": "GitHub is down.", "blocks": CARDS})
+    ]
+
+
+@pytest.mark.parametrize("blocks", [None, [], "nope", {"type": "section"}, ["x"], [{"type": "divider"}] * 51])
+def test_unusable_blocks_are_ignored_and_the_text_goes_out_alone(monkeypatch, slack, blocks):
+    _reply_with(monkeypatch, blocks=blocks)
+
+    assert _messages(slack.calls) == [("update", {"channel": "C123", "ts": "1.2", "text": "GitHub is down."})]
+
+
+def test_slack_rejecting_the_blocks_still_delivers_the_answer(monkeypatch, slack):
+    def reject_blocks(**kwargs):
+        if "blocks" in kwargs:
+            raise RuntimeError("invalid_blocks")
+        slack.calls.append(("update", kwargs))
+
+    monkeypatch.setattr(slack, "chat_update", reject_blocks)
+
+    _reply_with(monkeypatch, blocks=CARDS)
+
+    assert _messages(slack.calls) == [("update", {"channel": "C123", "ts": "1.2", "text": "GitHub is down."})]
+
+
+def test_blocks_are_not_sent_with_a_connect_request(monkeypatch, slack):
+    monkeypatch.setattr(
+        agent_worker,
+        "invoke_agent",
+        lambda *a, **k: {
+            "message": "x",
+            "blocks": CARDS,
+            "authRequired": {"provider": "LinkedIn", "authorizationUrl": "https://li/auth", "sessionUri": "urn:s1"},
+        },
+    )
+
+    agent_worker.process(JOB)
+
+    update = [kwargs for kind, kwargs in _messages(slack.calls) if kind == "update"][0]
+    assert "blocks" not in update
+    assert "I need access" in update["text"]

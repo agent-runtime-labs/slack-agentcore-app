@@ -15,6 +15,10 @@ in the agent). As a fallback for turns where the agent never gets to post anythi
 calls, a missing bot token in the agent's environment, ...), a timer here nudges the
 placeholder once if the call is still running past INTERIM_DELAY_SECONDS.
 
+A reply may also carry Block Kit `blocks` (the service status cards): they replace the
+placeholder together with the text. If Slack rejects them, the text goes out alone, so a
+malformed card can cost the formatting but never the answer.
+
 When a tool needs the user to connect an account, the job is saved with the private
 connect link (pending_auth.py). Once they connect, the OAuth callback queues it again
 with RESUMED_AFTER_AUTH set, and the answer replaces the "I need access" message: the
@@ -54,6 +58,7 @@ from slack_app.work_queue import RESUMED_AFTER_AUTH
 
 logger = logging.getLogger(__name__)
 
+MAX_BLOCKS = 50  # Slack's limit per message
 INTERIM_DELAY_SECONDS = 6
 INTERIM_TEXT = "🔎 Still working on it — checking tools and thinking this through…"
 RESUMED_TEXT = "🔄 Connected — picking your question back up…"
@@ -123,6 +128,7 @@ def process(job: dict) -> None:
         timer.cancel()
 
     auth = result.get("authRequired")
+    blocks = None
     if auth:
         provider = auth.get("provider") or "that"
         _send_connect_link(slack, job, user_id, auth)
@@ -133,9 +139,10 @@ def process(job: dict) -> None:
         _finish_reaction(slack, job, REACTION_AUTH_REQUIRED)
     else:
         text = result.get("message") or result.get("error") or "I didn't get a response."
+        blocks = _blocks(result)
         _finish_reaction(slack, job, REACTION_DONE)
 
-    _update(slack, job, text)
+    _update(slack, job, text, blocks)
 
 
 def _read_thread(slack, job: dict) -> Thread:
@@ -234,7 +241,21 @@ def _resume(slack, job: dict) -> None:
         add_reaction(slack, job["channel"], ts, REACTION_WORKING)
 
 
-def _update(slack, job: dict, text: str) -> None:
+def _blocks(result: dict) -> list[dict] | None:
+    """The agent's Block Kit, if it sent a plausible list (Slack allows at most 50 blocks)."""
+    blocks = result.get("blocks")
+    if isinstance(blocks, list) and blocks and len(blocks) <= MAX_BLOCKS and all(isinstance(b, dict) for b in blocks):
+        return blocks
+    return None
+
+
+def _update(slack, job: dict, text: str, blocks: list[dict] | None = None) -> None:
+    if blocks:
+        try:
+            slack.chat_update(channel=job["channel"], ts=job["placeholder_ts"], text=text, blocks=blocks)
+            return
+        except Exception:
+            logger.exception("Slack rejected the blocks; posting the text alone")
     try:
         slack.chat_update(channel=job["channel"], ts=job["placeholder_ts"], text=text)
     except Exception:
