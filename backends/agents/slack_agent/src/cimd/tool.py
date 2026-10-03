@@ -26,6 +26,7 @@ from strands.types.exceptions import MaxTokensReachedException, MCPClientInitial
 
 import config
 from auth_state import AuthState
+from bearer_auth import BearerAuth
 from cimd import oauth
 from cimd.discovery import AuthorizationServer, CimdUnsupported, discover
 from cimd.providers import CimdProvider, enabled_providers
@@ -165,15 +166,21 @@ def _usable_token(
 
 def run_mcp_agent(provider: CimdProvider, access_token: str, request: str) -> str:
     """Open an MCP session as the user and let a nested agent work through it."""
-    mcp_client = MCPClient(url=provider.mcp_url, headers={"Authorization": f"Bearer {access_token}"})
-    with mcp_client:
-        sub_agent = Agent(
-            model=_sub_agent_model(),
-            system_prompt=_system_prompt(provider),
-            tools=mcp_client.list_tools_sync(),
-            callback_handler=None,
-        )
-        return str(sub_agent(request)).strip()
+    auth = BearerAuth(access_token)
+    mcp_client = MCPClient(url=provider.mcp_url, auth_provider=auth)
+    try:
+        with mcp_client:
+            sub_agent = Agent(
+                model=_sub_agent_model(),
+                system_prompt=_system_prompt(provider),
+                tools=mcp_client.list_tools_sync(),
+                callback_handler=None,
+            )
+            return str(sub_agent(request)).strip()
+    except MCPClientInitializationError as err:
+        if auth.unauthorized:
+            raise MCPClientInitializationError(f"{provider.display_name} rejected the access token (HTTP 401)") from err
+        raise
 
 
 def _request_consent(provider: CimdProvider, server: AuthorizationServer, auth_state: AuthState) -> str:
