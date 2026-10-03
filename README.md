@@ -11,6 +11,8 @@
 - **LinkedIn and GitHub** through **AgentCore Identity** — AWS is the OAuth client and owns the token vault.
 - **Linear and Notion** through **CIMD** ([Client ID Metadata Documents](docs/cimd-providers.md), MCP SEP-991) — no client ID, no client secret, no registration: the app identifies itself to their authorization servers with the URL of a JSON document it publishes. Adding another CIMD server is one entry in a registry.
 
+It can also answer *"is GitHub down?"* with **Block Kit status cards**, built from a public status MCP server that needs no sign-in ([docs/status-mcp.md](docs/status-mcp.md)).
+
 Based on the AWS blog post [Integrating Amazon Bedrock AgentCore with Slack](https://aws.amazon.com/blogs/machine-learning/integrating-amazon-bedrock-agentcore-with-slack/) and its [sample](https://github.com/aws-samples/sample-Integrating-Amazon-Bedrock-AgentCore-with-Slack). This version uses Terraform, Python Lambdas, Tilt for local development, and per-user outbound OAuth.
 
 ```
@@ -71,6 +73,7 @@ Then click **send-test-mention** in Tilt and follow the connect link that appear
 | [GitHub & AgentCore Identity setup](docs/github-setup.md) | Same pattern as LinkedIn, using the `GithubOauth2` vendor |
 | [CIMD remote MCP servers](docs/cimd-providers.md) | Linear, Notion and how to add another in one registry entry |
 | [Deployment](docs/deployment.md) | Terraform with the S3 backend, updating, teardown, cost notes |
+| [Service status cards](docs/status-mcp.md) | A public status MCP server answered as Slack Block Kit cards; setup, layout, security |
 | [Per-user identity & security](docs/identity-and-security.md) | Why tokens don't leak between users; session binding |
 | [Troubleshooting](docs/troubleshooting.md) | Common errors and fixes |
 | [Dream Machine](docs/dream-machine.md) | Nightly, evidence-gated self-improvement that opens draft PRs only |

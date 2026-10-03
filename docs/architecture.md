@@ -189,6 +189,7 @@ flowchart LR
             T4["read_attachment"]:::agentcore
             T5["fetch_url"]:::agentcore
             T6["search_past_threads<br/>(knowledge on)"]:::agentcore
+            T7["check_service_status<br/>(STATUSPULSE_MCP_URL set)"]:::agentcore
         end
 
         NA["Nested agents<br/>Claude Haiku 4.5"]:::model
@@ -202,6 +203,7 @@ flowchart LR
     SF(["Slack files"]):::slack
     WEB["Public web"]:::ext
     VEC[("S3 Vectors<br/>thread summaries")]:::data
+    SPM["Status MCP server<br/>(public, no sign-in)"]:::ext
 
     IN ==> PR ==> AG
     AG <==> LLM
@@ -216,6 +218,7 @@ flowchart LR
     T4 -- "bot token" --> SF
     T5 -- "public addresses only" --> WEB
     T6 -- "QueryVectors,<br/>scope from the worker" --> VEC
+    T7 -- "get_status, no auth" --> SPM
     T1 & T2 & T3 -. "consent needed" .-> AS
 
     style RT fill:none,stroke:#00695c,stroke-dasharray:5 5
@@ -230,6 +233,7 @@ flowchart LR
 
 - **One lazy tool per service.** GitHub, Linear and Notion each expose dozens of MCP tools. The main agent sees one `use_<service>(request)` tool, and a short-lived nested agent works through that service's tool catalogue only when someone asks about it.
 - **AuthState** is how any tool says "this user must connect first". `main.py` reads it after the agent loop and returns `authRequired` to the worker.
+- **Status cards** ([status-mcp.md](status-mcp.md)). `check_service_status` calls a public status MCP server directly (no nested agent, no token) and leaves the structured result on a per-request `StatusCards` holder. `main.py` turns it into Block Kit (the model's answer as `blocks`, the cards as a colour-barred `attachments` entry) and returns both as optional fields next to `message`; the worker passes them to `chat.update`, and falls back to the text if Slack rejects them.
 - **Correct mode** (from triage) builds an agent with **no tools**. It can only point back to something the bot itself posted earlier in the thread.
 
 ### 2d. Team knowledge memory (optional)
@@ -771,6 +775,7 @@ flowchart LR
 - **A nested agent, not a top-level tool list, for GitHub.** Loading dozens of verbose MCP schemas into the main agent would cost a token-vault round trip and a schema dump on *every* Slack message. The main agent sees one lazy tool, `use_github(request)`, and only pays that cost when someone asks a GitHub question.
 - **CIMD instead of AgentCore Identity for Linear and Notion.** A constraint, not a preference. AgentCore's custom OAuth2 credential providers authenticate with `CLIENT_SECRET_BASIC`/`POST`, `AWS_IAM_ID_TOKEN_JWT` or `PRIVATE_KEY_JWT`. The CIMD draft forbids shared secrets, and these servers advertise only `none` (public client + PKCE), so none of the four fits. The alternative was deprecated Dynamic Client Registration. The cost is owning the token vault. The benefit is that the next such server needs no registration, no secret and no infrastructure change. See [cimd-providers.md](cimd-providers.md).
 - **One generic CIMD implementation, not one integration per vendor.** Discovery, PKCE, refresh, the token store and the tool wrapper are provider-agnostic. Everything vendor-specific lives in one registry file.
+- **Block Kit built in code, not written by the model, for status cards.** The cards come from the server's structured result, so they always match it, cost no output tokens, and cannot be talked into a layout by third-party status text. The model only adds a one- or two-sentence verdict. The worker treats `blocks` as optional and untrusted: a malformed or oversized list is ignored, and a Slack rejection falls back to plain text, so formatting can never cost the answer. See [status-mcp.md](status-mcp.md).
 - **No AgentCore Memory.** Each Runtime session is a microVM that lives until it idles out (`idle_session_timeout_seconds = 300`) or hits its cap (`max_session_lifetime_seconds = 3600`), see [agent-runtime.tf](../infra-as-code/tf-app/agent-runtime.tf). Nothing is remembered between requests: the worker reads the Slack thread (first message plus the latest 30) and sends it every time, so a follow-up after the session idles out, or from someone else in the thread, has the same context. The thread goes into the prompt as delimited data, so other people's text can inform an answer but can't trigger a tool call on the requester's accounts. See [thread_prompt.py](../backends/agents/slack_agent/src/thread_prompt.py). Team knowledge ([2d](#2d-team-knowledge-memory-optional)) doesn't change this: it is what other threads concluded, searched on demand, not a conversation history.
 - **References, not bytes, for files.** Downloading in the Lambdas would spend the 3-second budget, overflow the 256 KB SQS limit, and send images to triage for nothing. The agent downloads with the bot token it already holds for progress updates, keeps the bytes in memory for one invocation, and can only open file IDs from the thread the worker read.
 - **S3 Vectors directly, not a Bedrock Knowledge Base, for team knowledge.** A thread summary is short and self-contained, so chunking and a managed ingestion pipeline would add little. `PutVectors` and `DeleteVectors` on stable keys (`team:channel:thread_ts#problem-n`, `#learning-n`) make overwriting a re-summarised thread and deleting a thread or channel exact. Per-user memory across conversations would be AgentCore Memory's job, and is out of scope.
