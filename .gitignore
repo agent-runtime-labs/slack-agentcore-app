@@ -1,5 +1,7 @@
 # Secrets
 .env
+.env.local
+.env.*.local
 *.pem
 
 # Python
@@ -23,6 +25,19 @@ crash.log
 
 # Local agent tooling state
 .claude-flow/
+.codex/
+/.swarm/
+/ruvector.db
+/ruvector.db-*
+/ruvector.db.*
+
+# Claude local settings, backups, and generated reports
+.claude/settings.local.json
+.claude/settings.json.bak*
+.claude/security-scans/
+.claude/logs/
+.claude/sessions/
+.claude/checkpoints/
 
 # OS / editors
 .DS_Store
