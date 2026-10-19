@@ -1,0 +1,50 @@
+{
+  "name": "Weekly short-form video publish (illustrative example, not run by this repo)",
+  "cadence": "weekly",
+  "reviewer": {
+    "name": "content owner",
+    "mechanism": "signs off against every artifact below before the publish gate opens"
+  },
+  "spending_limit": {
+    "type": "bounded",
+    "description": "example only: cap editing/narration time and stock-asset spend per episode; anything over the cap is escalated for approval before work continues"
+  },
+  "inputs": [
+    "topic brief and target audience",
+    "draft script",
+    "raw and licensed footage and audio",
+    "brand style guide"
+  ],
+  "outputs": [
+    "published video on the target channel",
+    "asset manifest: what was used and under what license",
+    "a one-line publish log entry"
+  ],
+  "gates": [
+    {
+      "name": "script",
+      "requires": ["written script approved by the content owner"],
+      "blocks": "visual planning"
+    },
+    {
+      "name": "visual-plan",
+      "requires": ["shot list or storyboard matching the approved script"],
+      "blocks": "asset sourcing"
+    },
+    {
+      "name": "asset-receipts",
+      "requires": ["a receipt or license record for every externally sourced asset used"],
+      "blocks": "the audio check"
+    },
+    {
+      "name": "audio-check",
+      "requires": ["loudness and clarity pass on narration and music", "no unlicensed or unattributed audio"],
+      "blocks": "final review"
+    },
+    {
+      "name": "final-review",
+      "requires": ["content owner sign-off against the script, visual plan, asset receipts, and audio check"],
+      "blocks": "publish"
+    }
+  ]
+}
