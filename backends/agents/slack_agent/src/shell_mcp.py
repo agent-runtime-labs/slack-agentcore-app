@@ -89,7 +89,7 @@ def shell_session(document_blocks: list[dict]):
                 StdioServerParameters(
                     command="strands-shell",
                     args=["--config", str(config), "--mcp"],
-                    env={},  # do not pass service credentials to subprocess
+                    env={"PATH": os.getenv("PATH", "/usr/local/bin:/usr/bin:/bin")},
                 )
             )
         )
