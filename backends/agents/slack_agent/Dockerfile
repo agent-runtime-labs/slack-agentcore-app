@@ -11,6 +11,7 @@ ENV PYTHONUNBUFFERED=1 \
 
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
+ENV SHELL_MCP_ENABLED=true
 
 RUN useradd -m -u 1000 bedrock_agentcore
 
