@@ -51,6 +51,7 @@ from linkedin import build_linkedin_tool, workload_token_provider
 from past_threads import Scope, build_search_past_threads_tool
 from slack_progress import ProgressReporter
 from thread_prompt import build_prompt
+from shell_mcp import enabled as shell_enabled, shell_session, SHELL_RULE
 from web_fetch import build_fetch_url_tool
 
 logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO"))
@@ -114,6 +115,8 @@ have already corrected in this thread: never argue, and never correct the same p
 def _system_prompt(past_threads: bool = False) -> str:
     """The base prompt plus one routing line per enabled CIMD provider, and the past-threads rule if it has the tool."""
     lines = [BASE_SYSTEM_PROMPT]
+    if shell_enabled():
+        lines.append(SHELL_RULE)
     for provider in enabled_providers():
         lines.append(
             f"Only call {provider.tool_name} when the user explicitly asks about their "
@@ -187,19 +190,37 @@ def invoke(payload: dict, context: RequestContext) -> dict:
     if scope:
         tools.append(build_search_past_threads_tool(scope))
 
+    if shell_enabled():
+        with shell_session(file_blocks) as (shell_tools, remaining_blocks, staged_names):
+            shell_prompt = user_prompt
+            if staged_names:
+                shell_prompt += "\n\nText attachments available in Shell MCP: " + ", ".join(
+                    "/workspace/" + name for name in staged_names
+                ) + ". Use shell to analyze these files; do not assume you have seen their entire contents."
+            return _run_reply(
+                tools + shell_tools, SYSTEM_PROMPT_WITH_PAST_THREADS if scope else _system_prompt(past_threads=bool(scope)),
+                progress, remaining_blocks, shell_prompt, auth_state,
+            )
+    return _run_reply(
+        tools, SYSTEM_PROMPT_WITH_PAST_THREADS if scope else SYSTEM_PROMPT,
+        progress, file_blocks, user_prompt, auth_state,
+    )
+
+
+def _run_reply(tools, system_prompt, progress, file_blocks, user_prompt, auth_state):
     agent = Agent(
         model=model,
-        system_prompt=SYSTEM_PROMPT_WITH_PAST_THREADS if scope else SYSTEM_PROMPT,
+        system_prompt=system_prompt,
         tools=tools,
         callback_handler=progress.on_event,
     )
 
     logger.info(
         "Invoking agent for session %s with %d thread messages and %d of %d files",
-        session_id[:8],
-        len(thread),
+        "request",
+        0,
         len(file_blocks),
-        len(attachments.latest),
+        len(file_blocks),
     )
     # Files first, then the text that refers to them, as Anthropic recommends.
     result = agent([*file_blocks, {"text": user_prompt}] if file_blocks else user_prompt)
