@@ -1,0 +1,68 @@
+{
+  "name": "Dream Machine nightly self-improvement",
+  "cadence": "nightly (cron 37 2 * * *, see dream.config.json) -- the only genuinely repeated, gated job already running in this repo; not weekly",
+  "reviewer": {
+    "name": "repository owner",
+    "mechanism": "opens a draft PR only; autoMerge is false in dream.config.json, so a human always merges or closes"
+  },
+  "spending_limit": {
+    "type": "bounded",
+    "description": "one Claude Code cloud session per night; candidate diff capped at 300 lines; exactly one baseline pass and one evaluation pass of `make test`; no retries -- an untestable night ends INCONCLUSIVE with a written reason, not a second attempt"
+  },
+  "inputs": [
+    "dream.config.json (rotation slots, bonus moduli, disciplines)",
+    "docs/dream-cycle/LEDGER.md (every prior night's finding and verdict)",
+    "the current main branch source and tests"
+  ],
+  "outputs": [
+    "exactly one new row appended to docs/dream-cycle/LEDGER.md",
+    "a GitHub issue describing the night's finding",
+    "a draft PR on a dream/ branch, only when the verdict is ACCEPT"
+  ],
+  "gates": [
+    {
+      "name": "ledger-read",
+      "requires": ["docs/dream-cycle/LEDGER.md exists and passes dream_check.validate_ledger"],
+      "blocks": "picking tonight's rotation focus"
+    },
+    {
+      "name": "hypothesis-frozen",
+      "requires": ["one written, testable hypothesis", "a stated measurement method"],
+      "blocks": "writing any candidate code"
+    },
+    {
+      "name": "baseline-score",
+      "requires": ["`make test` run against the OLD code, result recorded"],
+      "blocks": "writing the candidate change"
+    },
+    {
+      "name": "candidate-change",
+      "requires": ["diff under 300 lines", "no test weakened, skipped, or deleted"],
+      "blocks": "evaluation"
+    },
+    {
+      "name": "evaluation-score",
+      "requires": ["`make test` run against the NEW code, same suite as the baseline"],
+      "blocks": "adversarial critique"
+    },
+    {
+      "name": "adversarial-critique",
+      "requires": ["a written check for cheating or test-weakening in the candidate"],
+      "blocks": "the witness hash"
+    },
+    {
+      "name": "witness-hash",
+      "requires": ["a hash tying the written report to the exact commit evaluated"],
+      "blocks": "opening the issue or PR"
+    },
+    {
+      "name": "final-review",
+      "requires": [
+        "exactly one verdict of ACCEPT, REJECT, or INCONCLUSIVE",
+        "a draft PR opened only on ACCEPT, labeled dream-cycle",
+        "the ledger row appended and re-validated by dream_check.validate_ledger"
+      ],
+      "blocks": "publish (merge) -- a human decides, this workflow never merges itself"
+    }
+  ]
+}

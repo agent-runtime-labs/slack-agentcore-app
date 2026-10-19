@@ -146,6 +146,22 @@ def test_user_declining_consent_is_not_an_error(pending, exchange):
     assert pending_auth_store().get("n1") is None  # the nonce is burned either way
 
 
+def test_error_without_state_is_rejected(pending, exchange):
+    # A bare `error=` carries no proof it came from the flow we started; it must not be
+    # able to burn the nonce.
+    result = callback({"error": "access_denied"})
+
+    assert result["statusCode"] == 403
+    assert pending_auth_store().get("n1") is not None  # still usable by the real user
+
+
+def test_error_with_wrong_state_is_rejected(pending, exchange):
+    result = callback({"error": "access_denied", "state": "state-of-someone-else"})
+
+    assert result["statusCode"] == 403
+    assert pending_auth_store().get("n1") is not None  # still usable by the real user
+
+
 def test_failed_exchange_returns_an_error_page(pending, monkeypatch):
     def boom(cimd, code):
         raise RuntimeError("invalid_grant")
