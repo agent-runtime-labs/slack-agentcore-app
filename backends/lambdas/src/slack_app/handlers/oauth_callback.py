@@ -123,6 +123,15 @@ def _complete_cimd(event: dict, store, pending) -> dict:
     """Finish an authorization-code + PKCE flow that we started ourselves."""
     cimd = pending.cimd
 
+    # The state ties this redirect to the authorization request we built. Checked before
+    # the error branch too: otherwise a bare `?error=` from anyone holding the cookie
+    # (SameSite=Lax still sends it on a top-level GET) could burn a victim's nonce without
+    # ever knowing their state value.
+    state = query_param(event, "state")
+    if not state or not hmac.compare_digest(cimd["state"], state):
+        logger.warning("%s callback rejected: state mismatch", cimd["provider"])
+        return _page(403, "Sign-in not recognised", "This sign-in doesn't match your link. Ask the bot again.")
+
     error = query_param(event, "error")
     if error:
         # The user pressed "Cancel", or the server refused us. Burn the nonce either way.
@@ -136,11 +145,8 @@ def _complete_cimd(event: dict, store, pending) -> dict:
         )
 
     code = query_param(event, "code")
-    state = query_param(event, "state")
-    # The state ties this redirect to the authorization request we built, so a code from
-    # any other flow (or injected by a third party) is rejected before it is spent.
-    if not code or not state or not hmac.compare_digest(cimd["state"], state):
-        logger.warning("%s callback rejected: state mismatch", cimd["provider"])
+    if not code:
+        logger.warning("%s callback rejected: missing code", cimd["provider"])
         return _page(403, "Sign-in not recognised", "This sign-in doesn't match your link. Ask the bot again.")
 
     # RFC 9207: servers that echo the issuer let us detect a mix-up between two
