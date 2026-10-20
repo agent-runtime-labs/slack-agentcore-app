@@ -53,6 +53,10 @@ def handler(event: dict, context) -> dict:
         logger.warning("Rejected request with invalid Slack signature")
         return json_response(401, {"error": "invalid signature"})
 
+    if event.get("rawPath", "").endswith("/slack/interactions"):
+        from slack_app.k8s_confirmation import confirm
+        return confirm(body)
+
     payload = json.loads(body)
     if payload.get("type") == "url_verification":
         return json_response(200, {"challenge": payload["challenge"]})

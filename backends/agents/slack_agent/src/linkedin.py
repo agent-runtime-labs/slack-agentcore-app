@@ -91,9 +91,7 @@ def build_linkedin_tool(get_workload_token: Callable[[], str], auth_state: AuthS
                 token = fetch_token(workload_token, force=True)
 
             if token.get("authorizationUrl"):
-                auth_state.provider = "LinkedIn"
-                auth_state.authorization_url = token["authorizationUrl"]
-                auth_state.session_uri = token.get("sessionUri")
+                auth_state.request("LinkedIn", token["authorizationUrl"], session_uri=token.get("sessionUri"))
                 return AUTH_REQUIRED_MESSAGE
         except Exception:
             logger.exception("LinkedIn tool failed")

@@ -3,3 +3,6 @@
 # InvokeAgentRuntime(runtimeUserId=...) needs a recent service model.
 boto3>=1.43.0
 slack-sdk>=3.36.0
+
+PyJWT[crypto]>=2.10.1,<3
+httpx>=0.28.1

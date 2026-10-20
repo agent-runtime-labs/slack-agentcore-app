@@ -24,6 +24,12 @@ class AuthState:
     authorization_url: str | None = None
     session_uri: str | None = None
     cimd: dict | None = None
+    kubernetes: dict | None = None
+
+    def request(self, provider: str, authorization_url: str, *, session_uri=None, cimd=None, kubernetes=None) -> None:
+        """Select exactly one pending flow, clearing prior tools' consent fields."""
+        self.provider, self.authorization_url = provider, authorization_url
+        self.session_uri, self.cimd, self.kubernetes = session_uri, cimd, kubernetes
 
     def as_dict(self) -> dict | None:
         if not self.authorization_url:
@@ -33,4 +39,5 @@ class AuthState:
             "authorizationUrl": self.authorization_url,
             "sessionUri": self.session_uri,
             "cimd": self.cimd,
+            **({"kubernetes": self.kubernetes} if self.kubernetes else {}),
         }

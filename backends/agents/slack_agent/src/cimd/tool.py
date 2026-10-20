@@ -178,9 +178,7 @@ def run_mcp_agent(provider: CimdProvider, access_token: str, request: str) -> st
 
 def _request_consent(provider: CimdProvider, server: AuthorizationServer, auth_state: AuthState) -> str:
     consent = oauth.consent_request(provider, server)
-    auth_state.provider = provider.display_name
-    auth_state.authorization_url = consent.authorization_url
-    auth_state.cimd = consent.as_payload()
+    auth_state.request(provider.display_name, consent.authorization_url, cimd=consent.as_payload())
     logger.info("Requesting %s consent (state %s...)", provider.key, consent.state[:6])
     return _auth_required_message(provider)
 

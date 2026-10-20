@@ -38,12 +38,19 @@ variable "oauth2_credential_provider_names" {
 }
 
 variable "additional_policy_statements" {
-  type        = list(any)
+  # IAM statements can differ in optional fields and scalar/list Resource values.
+  # list(any) still requires a common element type; preserve the caller's tuple.
+  type        = any
   description = <<-EOT
     Extra IAM policy statements for the execution role, for resources this module knows
     nothing about (e.g. a DynamoDB table holding OAuth tokens the agent manages itself).
   EOT
   default     = []
+
+  validation {
+    condition     = can(concat([], var.additional_policy_statements))
+    error_message = "Additional IAM policy statements must be a list or tuple."
+  }
 }
 
 variable "allowed_oauth2_return_urls" {

@@ -47,7 +47,7 @@ class DryRunSlackClient:
         self._lock = threading.Lock()
 
     def _log(self, method: str, **kwargs) -> dict:
-        logger.info("[slack dry-run] %s %s", method, kwargs)
+        logger.info("[slack dry-run] %s %s", method, "[private content omitted]" if method == "chat.postEphemeral" else kwargs)
         return {"ok": True, "ts": f"{time.time():.6f}"}
 
     def remember(self, channel: str, thread_ts: str, message: dict) -> None:

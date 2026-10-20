@@ -38,7 +38,7 @@ module "agent_runtime" {
       Resource = aws_dynamodb_table.cimd_tokens.arn
     },
     merge({ Sid = "ReadSlackBotToken" }, local.read_slack_secret),
-  ], local.knowledge_agent_statements)
+  ], local.knowledge_agent_statements, local.k8s_runtime_statements)
 
   environment_variables = merge({
     LOG_LEVEL              = var.log_level
@@ -59,5 +59,5 @@ module "agent_runtime" {
     CIMD_MODEL_ID            = var.cimd_model_id
     CIMD_CONNECTION_TTL_DAYS = var.cimd_connection_ttl_days
     # Team knowledge: search_past_threads reads the index; empty without knowledge_enabled.
-  }, local.knowledge_agent_env)
+  }, local.knowledge_agent_env, local.k8s_env)
 }

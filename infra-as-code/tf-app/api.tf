@@ -57,9 +57,10 @@ resource "aws_apigatewayv2_integration" "fn" {
 
 resource "aws_apigatewayv2_route" "this" {
   for_each = {
-    "POST /slack/events"   = "slack_events"
-    "GET /oauth2/start"    = "oauth_callback"
-    "GET /oauth2/callback" = "oauth_callback"
+    "POST /slack/events"       = "slack_events"
+    "POST /slack/interactions" = "slack_events"
+    "GET /oauth2/start"        = "oauth_callback"
+    "GET /oauth2/callback"     = "oauth_callback"
     # Our CIMD client_id. Authorization servers fetch it unauthenticated, from their
     # own infrastructure, so it must stay public.
     "GET /oauth2/client-metadata.json" = "oauth_callback"
