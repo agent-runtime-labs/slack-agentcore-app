@@ -52,6 +52,7 @@ def healthz() -> dict:
     return {"status": "ok"}
 
 
+@app.post("/slack/interactions")
 @app.post("/slack/events")
 async def slack_events_route(request: Request) -> Response:
     return await _invoke(slack_events.handler, request)

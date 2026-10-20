@@ -27,10 +27,11 @@ def _sqs():
     return boto3.client("sqs")
 
 
-def enqueue(job: dict, group_id: str, dedup_id: str) -> None:
+def enqueue(job: dict, group_id: str, dedup_id: str, *, sdk_config=None) -> None:
     queue_url = os.getenv("PROCESSING_QUEUE_URL")
     if queue_url:
-        _sqs().send_message(
+        sqs = boto3.client("sqs", config=sdk_config) if sdk_config else _sqs()
+        sqs.send_message(
             QueueUrl=queue_url,
             MessageBody=json.dumps(job),
             MessageGroupId=group_id,

@@ -43,6 +43,7 @@ class PendingAuth:
     expires_at: int
     # None for AgentCore Identity consents. See docs/cimd-providers.md for the schema.
     cimd: dict | None = None
+    kubernetes: dict | None = None
     # The worker job (JSON) that hit the consent wall. The callback queues it again once
     # the account is connected, so the user doesn't have to repeat the question. JSON
     # rather than a map because DynamoDB would hand numbers back as Decimal.

@@ -91,6 +91,10 @@ def callback(event: dict) -> dict:
         logger.warning("OAuth callback rejected: no live pending record for this cookie")
         return _page(403, "Sign-in not recognised", "This sign-in doesn't match your link. Ask the bot again.")
 
+    if pending.kubernetes:
+        from slack_app.k8s_callback import complete
+        return complete(event, store, pending)
+
     if pending.cimd:
         return _complete_cimd(event, store, pending)
     return _complete_agentcore(event, store, pending)

@@ -39,7 +39,7 @@ module "slack_events_fn" {
   environment_variables = merge(local.lambda_common_env, {
     PROCESSING_QUEUE_URL  = aws_sqs_queue.processing.url
     ENGAGED_THREADS_TABLE = aws_dynamodb_table.engaged_threads.name
-  }, local.knowledge_events_env)
+  }, local.knowledge_events_env, local.k8s_env)
 
   policy_json = jsonencode({
     Version = "2012-10-17"
@@ -55,7 +55,7 @@ module "slack_events_fn" {
         Action   = ["dynamodb:GetItem", "dynamodb:PutItem"]
         Resource = aws_dynamodb_table.engaged_threads.arn
       },
-    ], local.knowledge_events_statements)
+    ], local.knowledge_events_statements, local.k8s_confirm_statements)
   })
 }
 
@@ -142,11 +142,11 @@ module "oauth_callback_fn" {
     PUBLIC_BASE_URL          = local.public_base_url
     CIMD_TOKEN_TABLE         = aws_dynamodb_table.cimd_tokens.name
     CIMD_CONNECTION_TTL_DAYS = var.cimd_connection_ttl_days
-  })
+  }, local.k8s_env)
 
   policy_json = jsonencode({
     Version = "2012-10-17"
-    Statement = [
+    Statement = concat([
       local.read_slack_secret,
       {
         Effect   = "Allow"
@@ -183,6 +183,6 @@ module "oauth_callback_fn" {
         Action   = ["secretsmanager:GetSecretValue"]
         Resource = "arn:aws:secretsmanager:${var.region}:${local.account_id}:secret:bedrock-agentcore-identity!default/oauth2/*"
       },
-    ]
+    ], local.k8s_callback_statements)
   })
 }

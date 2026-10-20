@@ -191,6 +191,7 @@ def _send_connect_link(slack, job: dict, user_id: str, auth: dict) -> None:
         # a CIMD provider gives us the handoff payload the callback needs.
         session_uri=auth.get("sessionUri") or "",
         cimd=auth.get("cimd"),
+        kubernetes=auth.get("kubernetes"),
         authorization_url=auth["authorizationUrl"],
         channel=job["channel"],
         slack_user=job["user"],

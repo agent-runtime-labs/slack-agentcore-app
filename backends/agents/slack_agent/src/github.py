@@ -162,9 +162,7 @@ def build_github_tool(get_workload_token: Callable[[], str], auth_state: AuthSta
                     return "ERROR: that GitHub request produced too much output; ask for something narrower"
 
             if token.get("authorizationUrl"):
-                auth_state.provider = "GitHub"
-                auth_state.authorization_url = token["authorizationUrl"]
-                auth_state.session_uri = token.get("sessionUri")
+                auth_state.request("GitHub", token["authorizationUrl"], session_uri=token.get("sessionUri"))
                 return AUTH_REQUIRED_MESSAGE
         except Exception:
             logger.exception("GitHub tool failed")
