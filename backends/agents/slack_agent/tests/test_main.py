@@ -10,6 +10,7 @@ import attachments  # noqa: E402
 import main  # noqa: E402
 from cimd import PROVIDERS  # noqa: E402
 from slack_files import SlackFile  # noqa: E402
+from status_cards import parse_services  # noqa: E402
 
 SESSION = SimpleNamespace(session_id="s" * 64)
 THREAD = [{"author": "AgentCore Assistant", "text": "You have 3 open PRs: #12, #15, #20", "fromAssistant": True}]
@@ -173,3 +174,96 @@ def test_no_past_threads_tool_without_a_vector_bucket(monkeypatch):
     monkeypatch.setattr(main.config, "KNOWLEDGE_VECTOR_BUCKET", "")
     main.invoke(_payload(knowledge=KNOWLEDGE), SESSION)
     assert "past-threads-tool" not in str(created[0].kwargs["tools"])
+
+
+# --- service status cards ---------------------------------------------------------------
+
+STATUS_RESULT = {
+    "services": [
+        {"id": "github", "name": "GitHub", "indicator": "major", "description": "Outage", "incidents": []},
+        {"id": "discord", "name": "Discord", "indicator": "none", "description": "Fine", "incidents": []},
+    ]
+}
+
+
+def _status_tool_that_found(monkeypatch, structured):
+    """A check_service_status stand-in that has already filled the request's cards."""
+
+    def build(cards):
+        cards.show(parse_services(structured))
+        return "status-tool"
+
+    monkeypatch.setattr(main, "build_status_tool", build)
+
+
+def test_status_tool_is_added_only_when_configured(monkeypatch):
+    main.invoke(_payload(), SESSION)
+    assert "status-tool" not in created[0].kwargs["tools"]
+
+    monkeypatch.setattr(main, "build_status_tool", lambda cards: "status-tool")
+    main.invoke(_payload(), SESSION)
+    assert created[1].kwargs["tools"][-1] == "status-tool"
+
+
+def test_the_startup_log_says_whether_the_status_tool_is_on_without_the_full_url():
+    assert main.status_tool_state("") == "off (STATUSPULSE_MCP_URL is empty)"
+    assert main.status_tool_state("https://abc.ngrok-free.app/mcp?k=1") == "on (abc.ngrok-free.app)"
+
+
+def test_status_rule_is_in_the_prompt_only_when_configured(monkeypatch):
+    monkeypatch.setattr(main.config, "STATUSPULSE_MCP_URL", "")
+    assert "check_service_status" not in main._system_prompt()
+
+    monkeypatch.setattr(main.config, "STATUSPULSE_MCP_URL", "https://status.example.com/mcp")
+    assert "check_service_status" in main._system_prompt()
+    assert "third-party data" in main._system_prompt()
+
+
+def test_reply_carries_the_cards_under_the_models_answer(monkeypatch):
+    _status_tool_that_found(monkeypatch, STATUS_RESULT)
+    FakeAgent.answer = "GitHub has an outage."
+
+    result = main.invoke(_payload(), SESSION)
+
+    assert result["message"] == "GitHub has an outage."
+    assert result["authRequired"] is None
+    assert result["blocks"][0]["text"]["text"] == "GitHub has an outage."
+    [attachment] = result["attachments"]
+    assert attachment["color"] == "#E8912D"
+    assert attachment["blocks"][0]["text"]["text"].startswith("\U0001f6a6 *Service status*")
+
+
+def test_reply_without_a_status_check_has_no_blocks_or_attachments():
+    result = main.invoke(_payload(), SESSION)
+
+    assert "blocks" not in result and "attachments" not in result
+
+
+def test_markdown_bold_from_the_model_becomes_slack_bold(monkeypatch):
+    _status_tool_that_found(monkeypatch, STATUS_RESULT)
+    FakeAgent.answer = "**GitHub** has an outage."
+
+    result = main.invoke(_payload(), SESSION)
+
+    assert result["message"] == "*GitHub* has an outage."
+    assert result["blocks"][0]["text"]["text"] == "*GitHub* has an outage."
+
+
+def test_a_broadcast_the_model_copied_from_a_status_page_cannot_ping(monkeypatch):
+    _status_tool_that_found(monkeypatch, STATUS_RESULT)
+    FakeAgent.answer = "<!channel> GitHub has an outage."
+
+    result = main.invoke(_payload(), SESSION)
+
+    assert "<!channel>" not in result["message"]
+    assert "<!channel>" not in result["blocks"][0]["text"]["text"]
+
+
+def test_cards_never_leave_the_plain_text_reply_empty(monkeypatch):
+    _status_tool_that_found(monkeypatch, STATUS_RESULT)
+    FakeAgent.answer = ""
+
+    result = main.invoke(_payload(), SESSION)
+
+    assert "- GitHub: major outage (Outage)" in result["message"]
+    assert result["blocks"][0]["text"]["text"] == result["message"]  # shown once, not above a duplicate

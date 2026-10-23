@@ -37,6 +37,7 @@ _TOOL_TEXT = {
     "read_attachment": "\U0001f4ce Reading the attachment…",  # paperclip
     "fetch_url": "\U0001f310 Opening the link…",  # globe with meridians
     "search_past_threads": "\U0001f5c2\ufe0f Looking through earlier threads…",  # card index dividers
+    "check_service_status": "\U0001f6a6 Checking service status…",  # vertical traffic light
 }
 
 # Shown once the model starts producing its final answer, so the placeholder doesn't

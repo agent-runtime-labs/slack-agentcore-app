@@ -48,6 +48,22 @@ variable "github_provider_name" {
   default     = "slack-agent-github"
 }
 
+variable "statuspulse_mcp_url" {
+  type        = string
+  description = <<-EOT
+    Streamable-HTTP URL of a public status MCP server such as StatusPulse (see
+    docs/status-mcp.md), e.g. https://status.example.com/mcp. It needs no sign-in. The agent
+    uses it for the check_service_status tool and replies with Slack Block Kit cards.
+    Empty disables the tool.
+  EOT
+  default     = ""
+
+  validation {
+    condition     = var.statuspulse_mcp_url == "" || can(regex("^https://", var.statuspulse_mcp_url))
+    error_message = "statuspulse_mcp_url must be empty or an https:// URL."
+  }
+}
+
 variable "cimd_providers" {
   type        = list(string)
   description = <<-EOT

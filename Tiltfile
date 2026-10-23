@@ -47,6 +47,8 @@ k8s_object('ConfigMap', 'app-config', {
     'CIMD_TOKEN_TABLE': os.getenv('CIMD_TOKEN_TABLE', ''),
     'CIMD_CLIENT_ID': PUBLIC_BASE_URL + '/oauth2/client-metadata.json',
     'CIMD_MODEL_ID': os.getenv('CIMD_MODEL_ID', 'us.anthropic.claude-haiku-4-5-20251001-v1:0'),
+    # Public service status cards: empty disables check_service_status (docs/status-mcp.md).
+    'STATUSPULSE_MCP_URL': os.getenv('STATUSPULSE_MCP_URL', ''),
     # Team knowledge memory: off unless pointed at a real dev S3 Vectors bucket (there is
     # no local emulator). The quiet period is short here so the indexer runs soon.
     'KNOWLEDGE_ENABLED': os.getenv('KNOWLEDGE_ENABLED', 'false'),
