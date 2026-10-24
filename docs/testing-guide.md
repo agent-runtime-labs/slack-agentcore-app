@@ -81,6 +81,7 @@ make test
 | [test_web_fetch.py](../backends/agents/slack_agent/tests/test_web_fetch.py) | SSRF: private, loopback, link-local, metadata and CGNAT addresses, redirects to them, odd schemes, ports and credentials in URLs; connecting to the address that was checked; readable page text; PDF links; routing GitHub/Linear/Notion links |
 | [test_dream_check.py](../scripts/tests/test_dream_check.py) | The Dream Machine config and ledger rules (`make dream-check`) |
 | [test_dev_loop_parity.py](../scripts/tests/test_dev_loop_parity.py) | Tilt's **unit-tests** resource runs, and watches, the same suites as `make test` |
+| [test_timeout_budget.py](../scripts/tests/test_timeout_budget.py) | The agent call timeout is below the worker Lambda timeout, and the queue visibility timeout is at least 6 × the worker timeout (read from the Terraform, no AWS calls) |
 
 ---
 
