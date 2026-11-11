@@ -54,6 +54,8 @@ k8s_object('ConfigMap', 'app-config', {
     'KNOWLEDGE_INDEX': os.getenv('KNOWLEDGE_INDEX', 'threads'),
     'KNOWLEDGE_QUIET_SECONDS': os.getenv('KNOWLEDGE_QUIET_SECONDS', '30'),
     'KNOWLEDGE_EXCLUDED_CHANNELS': os.getenv('KNOWLEDGE_EXCLUDED_CHANNELS', ''),
+    # Diagrams: off unless a Kroki server is named (see diagrams.py in the agent).
+    'DIAGRAM_RENDER_URL': os.getenv('DIAGRAM_RENDER_URL', ''),
     'COOKIE_SECURE': 'false',
     'SLACK_DRY_RUN': SLACK_DRY_RUN,
     'OTEL_SDK_DISABLED': 'true',

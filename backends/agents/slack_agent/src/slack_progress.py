@@ -36,6 +36,7 @@ _DEFAULT_TOOL_EMOJI = "\U0001f50e"  # magnifying glass
 _TOOL_TEXT = {
     "read_attachment": "\U0001f4ce Reading the attachment…",  # paperclip
     "fetch_url": "\U0001f310 Opening the link…",  # globe with meridians
+    "draw_diagram": "\U0001f3a8 Drawing a diagram…",  # artist palette
     "search_past_threads": "\U0001f5c2\ufe0f Looking through earlier threads…",  # card index dividers
 }
 

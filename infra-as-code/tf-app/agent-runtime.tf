@@ -58,6 +58,8 @@ module "agent_runtime" {
     CIMD_TOKEN_TABLE         = aws_dynamodb_table.cimd_tokens.name
     CIMD_MODEL_ID            = var.cimd_model_id
     CIMD_CONNECTION_TTL_DAYS = var.cimd_connection_ttl_days
+    # Diagrams: the Kroki server draw_diagram renders Mermaid with; empty switches it off.
+    DIAGRAM_RENDER_URL = var.diagram_render_url
     # Team knowledge: search_past_threads reads the index; empty without knowledge_enabled.
   }, local.knowledge_agent_env)
 }

@@ -42,6 +42,8 @@ def fake_agent(monkeypatch):
     monkeypatch.setattr(main, "build_read_attachment_tool", lambda *a: "read-attachment-tool")
     monkeypatch.setattr(main, "build_fetch_url_tool", lambda *a: "fetch-url-tool")
     monkeypatch.setattr(main, "build_search_past_threads_tool", lambda scope: f"past-threads-tool:{scope.scope}")
+    monkeypatch.setattr(main, "build_draw_diagram_tool", lambda channel, thread_ts: f"diagram-tool:{channel}:{thread_ts}")
+    monkeypatch.setattr(main, "diagrams_enabled", lambda channel, thread_ts: False)
     return FakeAgent
 
 
@@ -173,3 +175,17 @@ def test_no_past_threads_tool_without_a_vector_bucket(monkeypatch):
     monkeypatch.setattr(main.config, "KNOWLEDGE_VECTOR_BUCKET", "")
     main.invoke(_payload(knowledge=KNOWLEDGE), SESSION)
     assert "past-threads-tool" not in str(created[0].kwargs["tools"])
+
+
+def test_diagram_tool_only_with_a_renderer_and_a_thread(monkeypatch):
+    main.invoke(_payload(channel="C1", threadTs="1.1"), SESSION)
+    monkeypatch.setattr(main, "diagrams_enabled", lambda channel, thread_ts: bool(channel and thread_ts))
+    main.invoke(_payload(channel="C1", threadTs="1.1"), SESSION)
+    main.invoke(_payload(channel="C1"), SESSION)
+
+    off, on, no_thread = created
+    assert "diagram-tool" not in str(off.kwargs["tools"])
+    assert "draw_diagram" not in off.kwargs["system_prompt"]
+    assert on.kwargs["tools"][-1] == "diagram-tool:C1:1.1"
+    assert "draw_diagram" in on.kwargs["system_prompt"]
+    assert "diagram-tool" not in str(no_thread.kwargs["tools"])

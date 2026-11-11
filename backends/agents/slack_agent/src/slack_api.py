@@ -1,8 +1,8 @@
 """The agent's own, minimal access to Slack: the bot token and a Web API caller.
 
-The agent posts progress to the placeholder message (slack_progress.py) and downloads
-files people attached (slack_files.py) itself, rather than routing either through the
-slack-app Lambdas. Both use the same bot token, from Secrets Manager in AWS or the
+The agent posts progress to the placeholder message (slack_progress.py), downloads files
+people attached (slack_files.py) and uploads the diagrams it draws (diagrams.py) itself, rather than routing either through the
+slack-app Lambdas. All use the same bot token, from Secrets Manager in AWS or the
 environment under Tilt.
 """
 
@@ -32,5 +32,17 @@ def call(method: str, params: dict[str, str]) -> dict:
     """GET a read method such as files.info. Returns Slack's JSON, whether "ok" or not."""
     url = API_BASE_URL + method + "?" + urllib.parse.urlencode(params)
     request = urllib.request.Request(url, headers={"Authorization": f"Bearer {bot_token()}"})
+    with urllib.request.urlopen(request, timeout=TIMEOUT_SECONDS) as response:  # nosec B310 - hardcoded https URL
+        return json.loads(response.read())
+
+
+def post(method: str, fields: dict[str, str]) -> dict:
+    """POST a write method such as files.completeUploadExternal, form-encoded. Returns Slack's JSON."""
+    request = urllib.request.Request(
+        API_BASE_URL + method,
+        data=urllib.parse.urlencode(fields).encode("utf-8"),
+        headers={"Authorization": f"Bearer {bot_token()}", "Content-Type": "application/x-www-form-urlencoded"},
+        method="POST",
+    )
     with urllib.request.urlopen(request, timeout=TIMEOUT_SECONDS) as response:  # nosec B310 - hardcoded https URL
         return json.loads(response.read())
