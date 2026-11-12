@@ -2,8 +2,10 @@
 
 Slack shows Mermaid source as plain text, so a diagram has to arrive as a picture:
 
-  * The source is rendered to PNG by a Kroki server (DIAGRAM_RENDER_URL). Kroki's
-    reason for refusing bad Mermaid goes back to the model, so it can fix the syntax.
+  * The source is rendered to PNG by the diagram-renderer Lambda in our own account
+    (DIAGRAM_RENDER_FUNCTION, see backends/diagram_renderer). The call is IAM-signed and
+    the source never leaves AWS. The renderer's reason for refusing bad Mermaid goes back
+    to the model, so it can fix the syntax.
   * The PNG is uploaded with Slack's external upload flow (files.getUploadURLExternal,
     a POST of the bytes, files.completeUploadExternal) and shared in the thread. That
     needs the files:write bot scope.
@@ -11,18 +13,19 @@ Slack shows Mermaid source as plain text, so a diagram has to arrive as a pictur
 The bot token only ever goes to slack.com: the upload URL Slack hands back must be an
 https URL on a Slack host, and the bytes are posted to it without the token.
 
-The diagram source leaves for whichever server DIAGRAM_RENDER_URL names, so the tool is
-off until that is set: point it at a Kroki you run for anything that isn't public.
+The tool is off until DIAGRAM_RENDER_FUNCTION names a function.
 """
 
-import io
+import base64
 import json
 import logging
 import urllib.error
 import urllib.request
+from functools import lru_cache
 from urllib.parse import urlsplit
 
-from PIL import Image
+import boto3
+from botocore.config import Config
 from strands import tool
 
 import config
@@ -31,14 +34,14 @@ import slack_api
 logger = logging.getLogger(__name__)
 
 MAX_SOURCE_CHARS = 6_000
-MAX_PNG_BYTES = 5_000_000
+MAX_PNG_BYTES = 4_000_000  # the renderer refuses more: a synchronous Lambda response is 6 MB
+MAX_RESPONSE_BYTES = 7_000_000
 MAX_DRAWINGS = 3  # per request, failed attempts included, so a bad diagram can't loop
-RENDER_TIMEOUT_SECONDS = 20
+RENDER_TIMEOUT_SECONDS = 40  # includes a cold start of the renderer's Chromium
 UPLOAD_TIMEOUT_SECONDS = 20
 _PNG_MAGIC = b"\x89PNG\r\n\x1a\n"
 _UPLOAD_HOST_SUFFIXES = (".slack.com",)
 FILENAME = "diagram.png"
-USER_AGENT = "slack-agentcore-assistant/1.0"
 
 
 class DiagramError(Exception):
@@ -47,54 +50,46 @@ class DiagramError(Exception):
 
 def enabled(channel: str | None, thread_ts: str | None) -> bool:
     """A renderer is configured, and we know which thread to post to and may post there."""
-    return bool(config.DIAGRAM_RENDER_URL and channel and thread_ts and slack_api.bot_token())
+    return bool(config.DIAGRAM_RENDER_FUNCTION and channel and thread_ts and slack_api.bot_token())
+
+
+@lru_cache(maxsize=1)
+def _lambda_client():
+    # No retries: a render that timed out has probably started a second Chromium already.
+    return boto3.client(
+        "lambda",
+        config=Config(connect_timeout=5, read_timeout=RENDER_TIMEOUT_SECONDS, retries={"max_attempts": 0}),
+    )
 
 
 def render(source: str) -> bytes:
-    """Mermaid source -> PNG bytes, by Kroki. Raises DiagramError with Kroki's reason."""
-    base = config.DIAGRAM_RENDER_URL.rstrip("/")
-    if urlsplit(base).scheme not in ("http", "https"):
-        raise DiagramError("the diagram renderer isn't configured correctly")
-    request = urllib.request.Request(
-        f"{base}/mermaid/png",
-        data=source.encode("utf-8"),
-        # kroki.io answers 403 to urllib's default "Python-urllib" user agent.
-        headers={"Content-Type": "text/plain", "Accept": "image/png", "User-Agent": USER_AGENT},
-        method="POST",
-    )
+    """Mermaid source -> PNG bytes, by the renderer Lambda. Raises DiagramError with its reason."""
     try:
-        with urllib.request.urlopen(request, timeout=RENDER_TIMEOUT_SECONDS) as response:  # nosec B310 - scheme checked
-            png = response.read(MAX_PNG_BYTES + 1)
-    except urllib.error.HTTPError as err:
-        detail = err.read(600).decode("utf-8", "replace").strip()
-        if err.code == 400:
-            raise DiagramError(f"the Mermaid source is invalid: {detail or 'syntax error'}") from err
-        logger.warning("Diagram renderer answered HTTP %s: %s", err.code, detail)
-        raise DiagramError("the diagram renderer is unavailable right now") from err
+        response = _lambda_client().invoke(
+            FunctionName=config.DIAGRAM_RENDER_FUNCTION, Payload=json.dumps({"mermaid": source}).encode("utf-8")
+        )
+        body = json.loads(response["Payload"].read(MAX_RESPONSE_BYTES))
     except Exception as err:
         logger.warning("Diagram renderer could not be reached", exc_info=True)
         raise DiagramError("the diagram renderer is unavailable right now") from err
+    if response.get("FunctionError") or not isinstance(body, dict):
+        # Only the error type: its message could quote the diagram.
+        logger.warning("Diagram renderer failed: %s", body.get("errorType") if isinstance(body, dict) else "?")
+        raise DiagramError("the diagram renderer is unavailable right now")
+    reason = body.get("error")
+    if reason == "invalid_source":
+        raise DiagramError(f"the Mermaid source is invalid: {str(body.get('detail') or 'syntax error')[:600]}")
+    if reason:
+        raise DiagramError("the diagram is too large; draw a smaller one")
+    try:
+        png = base64.b64decode(body.get("png_base64") or "", validate=True)
+    except ValueError as err:
+        raise DiagramError("the diagram renderer didn't return an image") from err
     if len(png) > MAX_PNG_BYTES:
         raise DiagramError("the diagram is too large; draw a smaller one")
     if not png.startswith(_PNG_MAGIC):
         raise DiagramError("the diagram renderer didn't return an image")
-    return _on_white(png)
-
-
-def _on_white(png: bytes) -> bytes:
-    """Kroki's PNG has a transparent background, so on Slack's dark theme the dark labels
-    and lines vanish. Flatten it onto white. Falls back to the original if that fails."""
-    try:
-        with Image.open(io.BytesIO(png)) as image:
-            image = image.convert("RGBA")
-            flat = Image.new("RGB", image.size, "white")
-            flat.paste(image, mask=image.getchannel("A"))
-            out = io.BytesIO()
-            flat.save(out, "PNG", optimize=True)
-            return out.getvalue()
-    except Exception:  # PIL raises many types for corrupt input
-        logger.warning("Could not put the diagram on a white background", exc_info=True)
-        return png
+    return png
 
 
 def upload(png: bytes, title: str, channel: str, thread_ts: str) -> None:

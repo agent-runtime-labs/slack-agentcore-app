@@ -22,7 +22,7 @@ The manifest configures:
 | | `channels:read`, `groups:read` | `conversations.info` and `conversations.members` for public/private channels: is a channel internal or Slack Connect, public or private, and who's in it. Used only by [team knowledge](#team-knowledge-optional). |
 | | `chat:write` | Post the placeholder, update it, and send ephemeral connect links. |
 | | `files:read` | Download the files people attach, so the bot can read them. See [Files and links](#files-and-links). |
-| | `files:write` | Post the diagrams the bot draws as images in the thread. Used only with `diagram_render_url` set (see `diagrams.py`). |
+| | `files:write` | Post the diagrams the bot draws as images in the thread. Used only with `diagram_renderer_enabled = true`, which renders in a Lambda in your own account (see `diagrams.py`, `backends/diagram_renderer`). |
 | | `im:history`, `im:read`, `im:write` | Receive and answer direct messages. |
 | | `reactions:write` | React to the user's message (👀 then 💬/⚠️/🔒) while it's being handled. |
 | | `users:read` | `users.info`, to check whether a channel has guests before searching earlier threads. Used only by [team knowledge](#team-knowledge-optional). |

@@ -27,6 +27,23 @@
 | "I can only open public web pages" for a site you can reach | The name resolves to a private address from the runtime, or the URL uses a non-default port | This is deliberate (SSRF protection). Share the content as a file instead. |
 | A page's answer says little | The page is rendered by JavaScript, so its HTML has almost no text | Paste the relevant text, or link to a static version (e.g. the raw README). |
 
+## Diagrams
+
+How it works: [diagrams.md](diagrams.md). The tool only exists when `DIAGRAM_RENDER_FUNCTION` is set, the worker sent the thread timestamp, and the agent has a bot token.
+
+| Symptom | Cause | Fix |
+|---|---|---|
+| The bot answers in text and never draws | The tool isn't registered: `DIAGRAM_RENDER_FUNCTION` is empty on the runtime, the runtime is still on an old container, or the bot token is missing | Check `aws bedrock-agentcore-control get-agent-runtime --agent-runtime-id <id> --query environmentVariables`. Make sure `diagram_renderer_enabled = true` was applied, and try a **new thread**. Locally, set `DIAGRAM_RENDER_FUNCTION` in `.env` and restart Tilt. |
+| "the diagram renderer is unavailable right now" | The agent couldn't invoke the renderer, or it crashed. The agent log has `Diagram renderer could not be reached` or `Diagram renderer failed: <type>` | Look at `/aws/lambda/<prefix>-diagram-renderer`. `AccessDenied` means the runtime role lacks `lambda:InvokeFunction` on it (`apply` again). A timeout or out-of-memory on the first call means raising `memory_size` in [diagrams.tf](../infra-as-code/tf-app/diagrams.tf). |
+| Works after a pause but the first diagram is slow | Cold start: Chromium is unpacked on the first render | Expected: about 5–10 s. Later renders in the same container take about a second. |
+| "the Mermaid source is invalid: Parse error on line …" | The model wrote bad Mermaid. The error goes back to it so it can retry | Usually fixed on the next attempt. If it keeps failing, ask for a simpler diagram: at most 15 nodes, short labels, quote labels with punctuation. `xychart-beta` is the most fragile type. |
+| "this app isn't allowed to post files yet (it needs the files:write scope)" | The app was installed before `files:write` was added | Add the scope, **Reinstall to Workspace**, and store the new bot token ([slack-setup.md](slack-setup.md)). |
+| "I'm not a member of this channel, so I can't post files here" | `not_in_channel` from Slack | `/invite @AgentCore Assistant` in that channel. A DM works without inviting. |
+| "the diagram is too large; draw a smaller one" | The source is over the limit, or the PNG is over 4 MB | Ask for the top N or an aggregate: [limits](diagrams.md#limits). |
+| Chart lines or bars are very faint, or labels vanish in dark mode | An older build: the default Mermaid theme with a transparent background | Deploy the current renderer ([index.mjs](../backends/diagram_renderer/index.mjs) sets an opaque background and a stronger palette). |
+| `terraform apply` rebuilds the renderer image every time | A file in `backends/diagram_renderer` changed, such as an installed `node_modules/` | The tag is a hash of that folder. Remove `node_modules/` there. It is in `.gitignore`. |
+| Image build fails at the Chromium download | The checksum in the Dockerfile doesn't match, or GitHub is unreachable | A changed upstream file fails the build on purpose. Update `CHROMIUM_VERSION` and `CHROMIUM_PACK_SHA256` together, from the release page. |
+
 ## LinkedIn / GitHub / AgentCore Identity
 
 | Symptom | Cause | Fix |

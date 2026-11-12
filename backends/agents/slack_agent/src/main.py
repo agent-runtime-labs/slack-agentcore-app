@@ -11,7 +11,7 @@ Request payload (sent by the agent_worker Lambda):
 `channel`/`messageTs` identify the Slack placeholder message; they're optional and only
 used to post live per-tool progress (see slack_progress.py) -- their absence never fails
 the request. `threadTs` is the thread they sit in, where draw_diagram posts its image
-(see diagrams.py); without it, or without DIAGRAM_RENDER_URL, the agent has no such tool.
+(see diagrams.py); without it, or without DIAGRAM_RENDER_FUNCTION, the agent has no such tool.
 `thread` is the Slack thread before the new message, and the agent's only history:
 nothing is kept between requests (see thread_prompt.py). In "correct" mode the agent
 gets no tools and returns an empty message unless someone misstated what it posted.

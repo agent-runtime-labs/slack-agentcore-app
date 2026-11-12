@@ -81,7 +81,7 @@ Six ideas explain most of the design:
 
 ## Level 2 — Mid level
 
-Four views of the same system: how a message gets answered, how an account gets connected, what happens inside the agent, and how earlier threads are remembered.
+Five views of the same system: how a message gets answered, how an account gets connected, what happens inside the agent, how earlier threads are remembered, and how a picture gets drawn.
 
 ### 2a. Answering a message
 
@@ -189,6 +189,7 @@ flowchart LR
             T4["read_attachment"]:::agentcore
             T5["fetch_url"]:::agentcore
             T6["search_past_threads<br/>(knowledge on)"]:::agentcore
+            T7["draw_diagram<br/>(renderer on)"]:::agentcore
         end
 
         NA["Nested agents<br/>Claude Haiku 4.5"]:::model
@@ -202,6 +203,7 @@ flowchart LR
     SF(["Slack files"]):::slack
     WEB["Public web"]:::ext
     VEC[("S3 Vectors<br/>thread summaries")]:::data
+    DR["λ diagram-renderer<br/>Mermaid → PNG"]:::aws
 
     IN ==> PR ==> AG
     AG <==> LLM
@@ -216,6 +218,8 @@ flowchart LR
     T4 -- "bot token" --> SF
     T5 -- "public addresses only" --> WEB
     T6 -- "QueryVectors,<br/>scope from the worker" --> VEC
+    T7 -- "Invoke { mermaid }" --> DR
+    T7 -- "upload the PNG,<br/>bot token" --> SF
     T1 & T2 & T3 -. "consent needed" .-> AS
 
     style RT fill:none,stroke:#00695c,stroke-dasharray:5 5
@@ -231,6 +235,7 @@ flowchart LR
 - **One lazy tool per service.** GitHub, Linear and Notion each expose dozens of MCP tools. The main agent sees one `use_<service>(request)` tool, and a short-lived nested agent works through that service's tool catalogue only when someone asks about it.
 - **AuthState** is how any tool says "this user must connect first". `main.py` reads it after the agent loop and returns `authRequired` to the worker.
 - **Correct mode** (from triage) builds an agent with **no tools**. It can only point back to something the bot itself posted earlier in the thread.
+- **Two tools are optional.** `search_past_threads` exists only with a knowledge scope from the worker, and `draw_diagram` only with a renderer configured and a thread to post to. When absent, the model never sees them.
 
 ### 2d. Team knowledge memory (optional)
 
@@ -310,6 +315,36 @@ Every filter also requires `team_id` and excludes the thread being answered. The
 
 **Retrieval** ([past_threads.py](../backends/agents/slack_agent/src/past_threads.py)). `search_past_threads(query)` embeds the query with Titan, runs `QueryVectors` (top 20), collapses a thread's problem and learning vectors into one hit, drops anything below a cosine similarity of 0.35 (`KNOWLEDGE_MIN_SIMILARITY`), and returns at most 5 threads in `<past_thread channel= started= last_reply= status= people= link=>` tags as untrusted data. The system prompt tells the model to search first for "has this happened before?", "how do we…?" and "what did we decide…?" questions, and to cite what it uses ("in #platform on 12 Sep, Carol found…") as what was found then, not as fact. It isn't run on every request.
 
+### 2e. Drawing diagrams and charts (optional)
+
+Off unless `diagram_renderer_enabled = true`. Slack shows Mermaid source as plain text, so when a flow, a timeline or a chart of numbers someone pasted explains the answer better, the agent posts a picture. Full guide: [diagrams.md](diagrams.md).
+
+```mermaid
+flowchart LR
+    SLK(["Slack thread"]):::slack
+    WK["λ agent-worker<br/>passes channel + thread_ts"]:::aws
+    RT["AgentCore Runtime<br/>draw_diagram · diagrams.py"]:::agentcore
+    LLM["Claude Haiku<br/>writes the Mermaid"]:::model
+    DR["λ diagram-renderer<br/>Node · Chromium · mermaid-cli<br/>role: logs only"]:::aws
+
+    WK == "InvokeAgentRuntime" ==> RT
+    RT <== "Converse" ==> LLM
+    RT == "lambda:InvokeFunction<br/>{ mermaid }" ==> DR
+    DR == "PNG, base64<br/>or invalid_source + reason" ==> RT
+    RT == "files.getUploadURLExternal<br/>POST bytes · completeUploadExternal" ==> SLK
+
+    classDef slack fill:#f3e5f5,stroke:#6a1b9a,color:#1a1a1a
+    classDef aws fill:#fff3e0,stroke:#e65100,color:#1a1a1a
+    classDef agentcore fill:#e0f2f1,stroke:#00695c,color:#1a1a1a
+    classDef model fill:#fce4ec,stroke:#ad1457,color:#1a1a1a
+```
+
+- **The source stays in the account.** The renderer is an IAM-only Lambda (no URL, no secrets, no tables). Only the agent's role may invoke it, and it never logs the diagram.
+- **A bad diagram goes back to the model.** Mermaid's parse error (line and expectation) is returned as the tool result so the model can fix the syntax. At most 3 attempts per reply.
+- **An opaque, readable PNG.** White background at 2× resolution and a strong chart palette, because Mermaid's default is near-white on transparent and vanishes on Slack's dark theme.
+- **The tool only exists when it can finish the job:** `DIAGRAM_RENDER_FUNCTION` is set, the worker sent the thread timestamp, and the agent has the bot token (`files:write` scope). The upload URL Slack returns must be an `https` URL on a `.slack.com` host, and the bot token never goes to the renderer.
+- **Locally**, the renderer isn't part of the Tilt stack (a browser doesn't belong in the dev loop). Point `DIAGRAM_RENDER_FUNCTION` at the deployed function, or run the image under the Lambda emulator, see [diagrams.md](diagrams.md#run-the-renderer-locally).
+
 ---
 
 ## Level 3 — Detailed
@@ -333,6 +368,7 @@ flowchart LR
         KQ[("SQS knowledge-index<br/>+ DLQ (optional)")]:::data
         IX["λ knowledge-indexer<br/>(optional)"]:::aws
         VEC[("S3 Vectors<br/>thread summaries")]:::data
+        DR["λ diagram-renderer<br/>(optional)<br/>Chromium · 2 GB"]:::aws
 
         subgraph AC["Bedrock AgentCore"]
             RT["Runtime<br/>Strands agent"]:::agentcore
@@ -366,8 +402,9 @@ flowchart LR
     RT -- "use_github" --> GHMCP
     RT -- "use_linear / use_notion" --> CIMD
     RT -- "read + refresh" --> TOK
-    RT -- "read_attachment,<br/>progress updates" --> SF
+    RT -- "read_attachment,<br/>progress updates,<br/>diagram upload" --> SF
     RT -- "fetch_url" --> WEB
+    RT -- "draw_diagram<br/>Invoke { mermaid }" --> DR
     EV -- "check / delete" --> KQ ==> IX
     IX -- "summarise, embed" --> BRK
     IX -- "Put / Delete" --> VEC
@@ -396,7 +433,7 @@ flowchart LR
     classDef ext fill:#eceff1,stroke:#455a64,color:#1a1a1a
 ```
 
-Not drawn, because everything uses them: **Secrets Manager** holds the Slack bot token and signing secret, read by all the Lambdas and the agent. The daily **EventBridge** rule that runs the knowledge sweep isn't drawn either. **ECR** holds the Lambda and agent images.
+Not drawn, because everything uses them: **Secrets Manager** holds the Slack bot token and signing secret, read by all the Lambdas and the agent. The daily **EventBridge** rule that runs the knowledge sweep isn't drawn either. **ECR** holds the Lambda, agent and (optional) diagram-renderer images.
 
 | Component | Source | Purpose |
 |---|---|---|
@@ -415,6 +452,8 @@ Not drawn, because everything uses them: **Secrets Manager** holds the Slack bot
 | Agent — attachments | [attachments.py](../backends/agents/slack_agent/src/attachments.py), [slack_files.py](../backends/agents/slack_agent/src/slack_files.py), [content_blocks.py](../backends/agents/slack_agent/src/content_blocks.py) | Opens files on the new message and sends them as Converse `image`/`document` blocks. `read_attachment(file_id)` opens an earlier file, but only one the worker listed. The bot token is sent only to `files.slack.com`. |
 | Agent — links | [web_fetch.py](../backends/agents/slack_agent/src/web_fetch.py) | `fetch_url(url)`: reads a public page or PDF. Checks every hop against private, loopback, link-local and metadata addresses, and hands GitHub, Linear and Notion links to their own tools. |
 | Agent — past threads (optional) | [past_threads.py](../backends/agents/slack_agent/src/past_threads.py) | `search_past_threads(query)`: registered only when the worker sends a `knowledge` scope. Builds the `QueryVectors` filter from it and returns at most 5 threads as untrusted `<past_thread>` data. |
+| Agent — diagrams (optional) | [diagrams.py](../backends/agents/slack_agent/src/diagrams.py) | `draw_diagram(mermaid, title)`: registered only with `DIAGRAM_RENDER_FUNCTION` set, a thread to post to and a bot token. Invokes the renderer, returns Mermaid's parse error to the model on a bad diagram (3 attempts per reply), then uploads the PNG with Slack's external upload flow. The upload URL must be `https` on `.slack.com`. |
+| `diagram-renderer` Lambda (optional) | [backends/diagram_renderer](../backends/diagram_renderer), [diagrams.tf](../infra-as-code/tf-app/diagrams.tf) | Node 22 container (arm64) running mermaid-cli in headless Chromium (a checksum-pinned build). Takes `{ mermaid }`, returns an opaque white PNG as base64, or `invalid_source` with the parse error. No secrets, tables or queues: its role writes its own logs. Only the agent runtime's role may invoke it, and it never logs the source. See [2e](#2e-drawing-diagrams-and-charts-optional) and [diagrams.md](diagrams.md). |
 | Agent — shared state | [auth_state.py](../backends/agents/slack_agent/src/auth_state.py) | `AuthState`: the side channel every tool writes to when consent is needed. |
 | GitHub remote MCP server | External (owned by GitHub) | GitHub's hosted MCP server, authenticated per request by the user's own vaulted token. No AgentCore Gateway involved. |
 | Infrastructure | [infra-as-code/tf-app](../infra-as-code/tf-app) | Terraform for all of the above, including the IAM allow-list for every configured model ([locals.tf](../infra-as-code/tf-app/locals.tf)). |
@@ -777,3 +816,5 @@ flowchart LR
 - **Summarise on quiet, not on every message.** Each message queues a check 10 minutes out, and a check that sees a newer person's message skips. So a burst of messages costs one summary call, and all the Slack reads, model calls and vector writes happen in the indexer, outside `slack-events`' 3-second budget.
 - **One Lambda image, four handlers.** A single build is shared, and `image_config.command` selects the handler. The same code runs locally.
 - **Claude Haiku 4.5 on the answer path, configured per job.** `MODEL_ID` (chat loop), `TRIAGE_MODEL_ID` (the worker's reply/react/correct/ignore decision), `GITHUB_MODEL_ID` and `CIMD_MODEL_ID` (nested agents) all default to `us.anthropic.claude-haiku-4-5-20251001-v1:0`. Nova Micro used to drive the chat loop, but it couldn't reliably weigh a whole thread and hit `MaxTokensReachedException` chaining GitHub's large tool catalogue. Nested agents get 4096 output tokens, the chat loop 1024. Team knowledge summaries are the exception: they run off the answer path, once per quiet thread, and their quality caps what search can find, so `knowledge_summary_model_id` defaults to Claude Sonnet 5.5 (`global.anthropic.claude-sonnet-5-5`, with Haiku 4.5 as the fallback). The IAM policies allow-list every configured model's inference-profile and foundation-model ARNs, see [locals.tf](../infra-as-code/tf-app/locals.tf).
+- **Diagrams are rendered in our own account, in their own Lambda.** The first version posted Mermaid to the public kroki.io, which would send org data to a third party (and 403'd Python's default user agent and returned transparent PNGs). Rendering needs a browser, and putting one in the agent container would sit it next to the Slack bot token and the runtime's credentials, while a Strands shell tool would hand the model arbitrary commands there. A container-image Lambda with no secrets and an IAM-only invoke keeps the source in the account and limits what a browser exploit can reach. Self-hosted Kroki would work, but needs an always-on service and a public endpoint with auth, because the runtime isn't in a VPC. See [diagrams.md](diagrams.md#design-notes).
+- **Mermaid, not model-written code, for charts.** Mermaid is declarative, so a hostile diagram can only fail to parse, and it runs with `securityLevel: "strict"`. Charting code the model wrote (matplotlib and the like) would need a code sandbox.

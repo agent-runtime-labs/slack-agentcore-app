@@ -1,0 +1,16 @@
+alert_name,service,count
+HighCPUUtilization,payments,212
+DiskUsageAbove80Percent,logging,187
+P99LatencyAboveSLO,checkout,164
+PodCrashLoopBackOff,orders,131
+Http5xxRateAbove1Percent,payments,118
+QueueDepthGrowing,notifications,96
+CertificateExpiresIn14Days,auth,88
+DBConnectionPoolNearLimit,orders,74
+MemoryUsageAbove90Percent,search,61
+HealthCheckFlapping,gateway,57
+ConsumerLagAboveThreshold,notifications,43
+SlowQueryCountHigh,orders,38
+ReplicaLagAbove5s,database,29
+FailedLoginSpike,auth,17
+DeployRollbackTriggered,checkout,9

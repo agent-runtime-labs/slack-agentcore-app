@@ -62,7 +62,7 @@ KNOWLEDGE_MIN_SIMILARITY = float(os.getenv("KNOWLEDGE_MIN_SIMILARITY", "0.35"))
 
 # --- Diagrams (see diagrams.py) ---------------------------------------------------------
 
-# Base URL of the Kroki server that renders the Mermaid the model writes, e.g.
-# https://kroki.io or one you run yourself. Empty disables draw_diagram: the diagram
-# source is sent to this server, so it is a choice to make, not a default.
-DIAGRAM_RENDER_URL = os.getenv("DIAGRAM_RENDER_URL", "")
+# Name or ARN of the diagram-renderer Lambda (backends/diagram_renderer) that turns the
+# Mermaid the model writes into a PNG. The source goes to that function in our own
+# account and nowhere else. Empty disables draw_diagram.
+DIAGRAM_RENDER_FUNCTION = os.getenv("DIAGRAM_RENDER_FUNCTION", "")

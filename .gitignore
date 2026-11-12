@@ -11,6 +11,9 @@ __pycache__/
 .pytest_cache/
 .ruff_cache/
 
+# Node (backends/diagram_renderer)
+node_modules/
+
 # Terraform
 .terraform/
 *.tfstate
