@@ -68,6 +68,9 @@ def test_draws_and_posts_the_image_in_the_thread(http, slack):
     render, upload = http
     assert render.full_url == "https://kroki.example/mermaid/png"
     assert render.data == SOURCE.encode()
+    # kroki.io answers 403 to urllib's default "Python-urllib" user agent.
+    assert not render.get_header("User-agent", "").startswith("Python-urllib")
+    assert render.get_header("User-agent")
     assert upload.full_url == UPLOAD_URL
     assert upload.data == PNG
     # The bot token goes to slack.com only, never with the bytes.
@@ -80,6 +83,23 @@ def test_draws_and_posts_the_image_in_the_thread(http, slack):
         ),
     ]
     assert "posted in the thread" in result
+
+
+def test_transparent_render_is_put_on_white(monkeypatch):
+    """Kroki's PNG is transparent: dark labels vanish on Slack's dark theme."""
+    from PIL import Image
+
+    source = io.BytesIO()
+    image = Image.new("RGBA", (4, 4), (0, 0, 0, 0))
+    image.putpixel((1, 1), (10, 20, 30, 255))
+    image.save(source, "PNG")
+    monkeypatch.setattr(diagrams.urllib.request, "urlopen", lambda request, timeout=None: Response(source.getvalue()))
+
+    out = Image.open(io.BytesIO(diagrams.render(SOURCE)))
+
+    assert out.mode == "RGB"
+    assert out.getpixel((0, 0)) == (255, 255, 255)
+    assert out.getpixel((1, 1)) == (10, 20, 30)
 
 
 def test_invalid_mermaid_goes_back_to_the_model(monkeypatch, slack):

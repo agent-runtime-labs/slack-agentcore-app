@@ -15,12 +15,14 @@ The diagram source leaves for whichever server DIAGRAM_RENDER_URL names, so the 
 off until that is set: point it at a Kroki you run for anything that isn't public.
 """
 
+import io
 import json
 import logging
 import urllib.error
 import urllib.request
 from urllib.parse import urlsplit
 
+from PIL import Image
 from strands import tool
 
 import config
@@ -36,6 +38,7 @@ UPLOAD_TIMEOUT_SECONDS = 20
 _PNG_MAGIC = b"\x89PNG\r\n\x1a\n"
 _UPLOAD_HOST_SUFFIXES = (".slack.com",)
 FILENAME = "diagram.png"
+USER_AGENT = "slack-agentcore-assistant/1.0"
 
 
 class DiagramError(Exception):
@@ -55,7 +58,8 @@ def render(source: str) -> bytes:
     request = urllib.request.Request(
         f"{base}/mermaid/png",
         data=source.encode("utf-8"),
-        headers={"Content-Type": "text/plain", "Accept": "image/png"},
+        # kroki.io answers 403 to urllib's default "Python-urllib" user agent.
+        headers={"Content-Type": "text/plain", "Accept": "image/png", "User-Agent": USER_AGENT},
         method="POST",
     )
     try:
@@ -74,7 +78,23 @@ def render(source: str) -> bytes:
         raise DiagramError("the diagram is too large; draw a smaller one")
     if not png.startswith(_PNG_MAGIC):
         raise DiagramError("the diagram renderer didn't return an image")
-    return png
+    return _on_white(png)
+
+
+def _on_white(png: bytes) -> bytes:
+    """Kroki's PNG has a transparent background, so on Slack's dark theme the dark labels
+    and lines vanish. Flatten it onto white. Falls back to the original if that fails."""
+    try:
+        with Image.open(io.BytesIO(png)) as image:
+            image = image.convert("RGBA")
+            flat = Image.new("RGB", image.size, "white")
+            flat.paste(image, mask=image.getchannel("A"))
+            out = io.BytesIO()
+            flat.save(out, "PNG", optimize=True)
+            return out.getvalue()
+    except Exception:  # PIL raises many types for corrupt input
+        logger.warning("Could not put the diagram on a white background", exc_info=True)
+        return png
 
 
 def upload(png: bytes, title: str, channel: str, thread_ts: str) -> None:
