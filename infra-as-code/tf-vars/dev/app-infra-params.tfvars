@@ -14,6 +14,11 @@ log_level              = "INFO"
 cimd_providers = ["linear", "notion"]
 cimd_model_id  = "us.anthropic.claude-haiku-4-5-20251001-v1:0"
 
+# draw_diagram: deploys the diagram-renderer Lambda (backends/diagram_renderer) that turns the
+# agent's Mermaid into a PNG inside this account, so diagram source never leaves it. False
+# leaves the tool out. Needs the files:write Slack scope (docs/slack-setup.md).
+diagram_renderer_enabled = true
+
 # Team knowledge memory: find and cite earlier Slack threads (see docs/architecture.md).
 # Needs extra Slack scopes and events first (docs/slack-setup.md).
 knowledge_enabled           = true

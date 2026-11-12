@@ -65,6 +65,12 @@ variable "cimd_model_id" {
   default     = "us.anthropic.claude-haiku-4-5-20251001-v1:0"
 }
 
+variable "diagram_renderer_enabled" {
+  type        = bool
+  description = "Deploy the diagram-renderer Lambda (backends/diagram_renderer) and give the agent its draw_diagram tool. The diagram source stays in this AWS account. Needs the files:write Slack scope."
+  default     = false
+}
+
 variable "cimd_connection_ttl_days" {
   type        = number
   description = "Days a CIMD connection survives unused before DynamoDB TTL drops it and the user must reconnect."

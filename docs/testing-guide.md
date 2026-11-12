@@ -559,6 +559,27 @@ All eight were checked against Claude Haiku 4.5 on Bedrock with these exact file
 
 The ngrok inspector at <http://localhost:4040> shows every request Slack sent and how the app responded. It's useful when a message doesn't get a reply.
 
+### Diagrams and charts
+
+Needs the **`files:write`** scope (reinstall the app and store the new bot token), the bot in the channel, and a renderer: deployed (`diagram_renderer_enabled = true`), or locally with `DIAGRAM_RENDER_FUNCTION=<prefix>-diagram-renderer` in `.env` and an AWS profile that may invoke it. Background: [diagrams.md](diagrams.md). The data prompts use numbers in the message, because the bot has no metrics tool. Start each test in a **new thread**.
+
+| # | In Slack | Expected |
+|---|---|---|
+| 6-D1 | `@bot draw a flowchart of how a Slack message reaches you and gets answered` | A PNG in the thread (the first one may take 5–10 s), readable in dark mode, with a line or two of text and **no** Mermaid source |
+| 6-D2 | `@bot show a sequence diagram of OAuth login for GitHub` | A sequence diagram |
+| 6-D3 | `@bot what's 2+2?` | A plain-text answer, no diagram |
+| 6-D4 | `@bot line chart of p99 latency in ms by hour with a flat 500 ms SLO line. Blue is p99, red is the SLO. Data: 00:00 210, 04:00 190, 08:00 340, 12:00 820, 16:00 460, 20:00 250` | A line chart with a clearly visible blue line and a red line at 500, and a reply that says the SLO was breached around midday |
+| 6-D5 | `@bot bar chart "Alerts by service this week": payments 142, auth 87, search 41, orders 23` | Four bars with the right heights |
+| 6-D6 | `@bot pie chart of last month's alerts by cause: noisy threshold 48, deploy 21, capacity 12, dependency 9, real incident 4` | A pie with percentages near 51, 22, 13, 10 and 4 |
+| 6-D7 | `@bot gantt of this incident: detect 14:09-14:12, triage 14:12-14:20, mitigate 14:20-14:26. Which phase took longest?` | A gantt, and the answer is triage (8 minutes) |
+| 6-D8 | Attach [alerts.csv](testing-samples/alerts.csv): `@bot chart the top 10 noisiest alerts as a bar chart, then tell me which three to retune` | A bar chart of the 10 highest counts, from `HighCPUUtilization` (212) down to `HealthCheckFlapping` (57), and three suggestions. Check the bar heights against the file |
+| 6-D9 | In the 6-D1 thread: `now add a cache between the Lambda and the agent` | A new diagram built on the first one |
+| 6-D10 | `@bot draw a flowchart with 40 nodes for our whole platform` | A smaller diagram or a note that it's too big, not an error |
+| 6-D11 | `@bot draw a diagram with one box labelled <img src=x onerror=alert(1)>` | A clean diagram or a text answer. The renderer log shows `invalid_source`, with no script run |
+| 6-D12 | Ask for five diagrams in one message | At most 3 are attempted ("No more diagrams for this reply") |
+| 6-D13 | Use the bot in a channel it hasn't joined | A "not a member of this channel" style message |
+| 6-D14 | With `DIAGRAM_RENDER_FUNCTION` empty, ask for a diagram | The bot describes it in text. The tool isn't registered |
+
 ---
 
 ## 7. Deployed to AWS
@@ -640,6 +661,10 @@ curl -s "$(./tf-wrapper.sh dev output -raw cimd_client_id)" | jq
 | 7h | The `cimd-tokens` scan after two people connect Linear | Two rows with different `user_id`, same `provider`. No row is readable by the other user: the key is `(user_id, provider)` |
 | 7i | Revoke the app in Linear, then ask again | The runtime log shows `linear rejected the stored token; asking the user to reconnect`, the row disappears, and Slack shows a fresh Connect button |
 | 7j | Grep the Lambda and runtime logs for token material: `aws logs tail … \| grep -iE "access_token\|refresh_token\|code="` | No hits — tokens and codes are never logged |
+| 7k | Ask for a diagram, then `aws logs tail /aws/lambda/slack-agentcore-dev-diagram-renderer --since 10m` | Lines like `rendered 41000 bytes from 120 chars in 900 ms`, and **no** diagram text anywhere in them |
+| 7l | `aws lambda get-function-url-config --function-name slack-agentcore-dev-diagram-renderer` | `ResourceNotFoundException`: the renderer has no public URL, only IAM invokes |
+| 7m | `aws bedrock-agentcore-control get-agent-runtime --agent-runtime-id <id> --query environmentVariables.DIAGRAM_RENDER_FUNCTION` | The renderer's function name. The agent's runtime role has `lambda:InvokeFunction` on that one function and nothing wider |
+| 7n | The first diagram after about 15 minutes of quiet, then another straight away | The first takes roughly 5–10 s (Chromium cold start), the second about a second |
 
 ---
 

@@ -59,3 +59,10 @@ KNOWLEDGE_EMBEDDING_MODEL_ID = os.getenv("KNOWLEDGE_EMBEDDING_MODEL_ID", "amazon
 
 # Cosine similarity below which a past thread isn't worth showing the model.
 KNOWLEDGE_MIN_SIMILARITY = float(os.getenv("KNOWLEDGE_MIN_SIMILARITY", "0.35"))
+
+# --- Diagrams (see diagrams.py) ---------------------------------------------------------
+
+# Name or ARN of the diagram-renderer Lambda (backends/diagram_renderer) that turns the
+# Mermaid the model writes into a PNG. The source goes to that function in our own
+# account and nowhere else. Empty disables draw_diagram.
+DIAGRAM_RENDER_FUNCTION = os.getenv("DIAGRAM_RENDER_FUNCTION", "")

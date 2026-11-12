@@ -36,6 +36,7 @@ def invoke_agent(
     files: list[dict] | None = None,
     mode: str = MODE_REPLY,
     knowledge: dict | None = None,
+    thread_ts: str | None = None,
 ) -> dict:
     """Returns the agent's JSON response: {"message": str, "authRequired": dict | None}.
 
@@ -48,6 +49,8 @@ def invoke_agent(
     nothing to correct.
     knowledge is the search scope for past threads (knowledge/scope.py); without it the
     agent has no search_past_threads tool.
+    thread_ts is the thread the placeholder sits in, where the agent posts the diagrams it
+    draws (diagrams.py in the agent).
     """
     body = {
         "prompt": prompt,
@@ -55,6 +58,7 @@ def invoke_agent(
         "sessionId": session_id,
         "channel": channel,
         "messageTs": message_ts,
+        "threadTs": thread_ts,
         "thread": thread or [],
         "requester": requester,
         "files": files or [],

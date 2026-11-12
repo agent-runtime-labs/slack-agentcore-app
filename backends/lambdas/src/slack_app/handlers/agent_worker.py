@@ -111,6 +111,7 @@ def process(job: dict) -> None:
             thread=[message.as_dict() for message in thread.history],
             requester=requester,
             files=[file.as_dict() for file in files],
+            thread_ts=job["thread_ts"],
             **({"knowledge": knowledge} if knowledge else {}),
         )
     except Exception:

@@ -6,10 +6,11 @@
 
 | Area | Resources |
 |---|---|
-| Images | 2 ECR repositories (`-agent`, `-lambdas`) with lifecycle policies. `docker buildx` builds and pushes linux/arm64 images from your machine. |
+| Images | 2 ECR repositories (`-agent`, `-lambdas`), plus `-diagram-renderer` when `diagram_renderer_enabled = true`, with lifecycle policies. `docker buildx` builds and pushes linux/arm64 images from your machine. |
 | Agent | AgentCore Runtime `slack_agentcore_dev` plus its execution role, and the allowed return URL on its workload identity. |
 | Slack path | HTTP API (`POST /slack/events`, `GET /oauth2/start`, `GET /oauth2/callback`, `GET /oauth2/client-metadata.json`) with throttling and access logs; 3 Lambdas; SQS FIFO queue and DLQ |
 | State | DynamoDB `pending-oauth` table (TTL); DynamoDB `cimd-tokens` table (per-user CIMD tokens, TTL); an empty Secrets Manager secret for Slack credentials |
+| Diagrams (optional) | `diagram_renderer_enabled = true` adds the `diagram-renderer` Lambda (Chromium, 2 GB, no permissions beyond its logs), its image repository, and `lambda:InvokeFunction` for the agent runtime. It needs the `files:write` Slack scope. See [diagrams.md](diagrams.md). |
 
 Not managed by Terraform: the LinkedIn and GitHub OAuth2 credential providers (see [linkedin-setup.md](linkedin-setup.md) and [github-setup.md](github-setup.md)).
 

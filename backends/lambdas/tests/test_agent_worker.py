@@ -63,6 +63,7 @@ def test_answer_replaces_placeholder(monkeypatch, slack):
 
     def fake_invoke(prompt, user_id, session_id, channel, message_ts, **kwargs):
         seen.update(prompt=prompt, user_id=user_id, session_id=session_id, channel=channel, message_ts=message_ts)
+        seen.update(thread_ts=kwargs.get("thread_ts"))
         return {"message": "Your name is Alice.", "authRequired": None}
 
     monkeypatch.setattr(agent_worker, "invoke_agent", fake_invoke)
@@ -72,6 +73,7 @@ def test_answer_replaces_placeholder(monkeypatch, slack):
     assert len(seen["session_id"]) == 64
     assert seen["channel"] == "C123"
     assert seen["message_ts"] == "1.2"
+    assert seen["thread_ts"] == "1.1"  # where the agent posts the diagrams it draws
     assert _messages(slack.calls) == [("update", {"channel": "C123", "ts": "1.2", "text": "Your name is Alice."})]
 
 
@@ -281,7 +283,7 @@ def test_unreadable_thread_falls_back_to_the_job(monkeypatch, slack):
     )
     agent_worker.process(JOB)
 
-    assert seen == {"prompt": "what's my LinkedIn name?", "thread": [], "requester": "UALICE", "files": []}
+    assert seen == {"prompt": "what's my LinkedIn name?", "thread": [], "requester": "UALICE", "files": [], "thread_ts": "1.1"}
 
 
 TRIAGE_JOB = {

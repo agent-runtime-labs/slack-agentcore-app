@@ -122,6 +122,26 @@ IAM stays narrow: the indexer may `PutVectors`, `GetVectors`, `DeleteVectors` an
 
 The feature needs three more read scopes: `channels:read` and `groups:read` (`conversations.info`, `conversations.members`) and `users:read` (the guest check). They let the bot see channel metadata, membership and user profiles, not message content.
 
+## Diagrams: rendering what the model writes
+
+`draw_diagram` turns Mermaid the model wrote into an image ([diagrams.md](diagrams.md)). The source can carry whatever people pasted (alert counts, service names), and rendering needs a browser, so the controls are about where the source goes and what a browser could reach.
+
+| Risk | Control | Where |
+|---|---|---|
+| Org data sent to a third party | The source goes only to a Lambda in the same account, over an IAM-signed invoke. There is no public URL and no external renderer | [diagrams.py](../backends/agents/slack_agent/src/diagrams.py), [diagrams.tf](../infra-as-code/tf-app/diagrams.tf) |
+| Anyone else calling the renderer | Only the agent runtime's role has `lambda:InvokeFunction` on it | [diagrams.tf](../infra-as-code/tf-app/diagrams.tf) |
+| A crafted diagram attacking the browser | Chromium runs in its own function whose role can write its own logs and nothing else: no secrets, tables, queues or Slack token. The agent container never runs a browser | [diagrams.tf](../infra-as-code/tf-app/diagrams.tf), [index.mjs](../backends/diagram_renderer/index.mjs) |
+| HTML or script in a label | Mermaid runs with `securityLevel: "strict"`, so HTML is encoded and click handlers are off. An `<img onerror=…>` label fails to parse | [index.mjs](../backends/diagram_renderer/index.mjs) |
+| Diagram text in logs | The renderer logs sizes and timings only. The agent logs the error type of a failed render, never its message, which could quote the diagram. A Mermaid parse error is returned to the model on purpose, because it needs it to fix the syntax | [index.mjs](../backends/diagram_renderer/index.mjs), [diagrams.py](../backends/agents/slack_agent/src/diagrams.py) |
+| Leaking the bot token | The renderer never receives it. For the upload, the URL Slack returns must be `https` on `.slack.com`, and the bytes are posted to it without the token | [diagrams.py](../backends/agents/slack_agent/src/diagrams.py) |
+| A tampered Chromium build | The release is pinned and checked against a sha256 in the Dockerfile, so a changed file fails the build | [Dockerfile](../backends/diagram_renderer/Dockerfile) |
+| A diagram loop burning compute | At most 3 attempts per reply, failures included, a 6,000-character source cap, a 4 MB image cap and a 30 s Lambda timeout | [diagrams.py](../backends/agents/slack_agent/src/diagrams.py) |
+| Prompt injection into a diagram | Other people's text is data, and only the latest message is a request. A diagram can at most draw a picture, and the tool takes no action on an account | `DIAGRAMS_RULE` in [main.py](../backends/agents/slack_agent/src/main.py) |
+
+Not blocked: the Lambda has outbound internet. Chromium loads only local assets while rendering, but egress isn't filtered. Putting the function in a VPC with no route out would close that, at the cost of extra network setup.
+
+The `files:write` scope lets the bot upload files to channels it is a member of. It can't read anything more than before.
+
 ## Other controls
 
 | Control | Where |

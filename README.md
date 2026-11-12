@@ -31,6 +31,7 @@ Browser ─► API Gateway ─► λ oauth-callback ─► CompleteResourceToken
 ├── backends/
 │   ├── agents/slack_agent/     Strands agent (AgentCore Runtime container)
 │   ├── lambdas/                slack-events, agent-worker, oauth-callback (one image) + local server
+│   ├── diagram_renderer/       Node + Chromium Lambda: Mermaid -> PNG for draw_diagram (optional)
 │   └── requests.http           Handy local HTTP requests
 ├── infra-as-code/
 │   ├── tf-app/                 Root Terraform stack
@@ -70,6 +71,7 @@ Then click **send-test-mention** in Tilt and follow the connect link that appear
 | [LinkedIn & AgentCore Identity setup](docs/linkedin-setup.md) | Developer app, credential provider, redirect URLs |
 | [GitHub & AgentCore Identity setup](docs/github-setup.md) | Same pattern as LinkedIn, using the `GithubOauth2` vendor |
 | [CIMD remote MCP servers](docs/cimd-providers.md) | Linear, Notion and how to add another in one registry entry |
+| [Diagrams and charts](docs/diagrams.md) | `draw_diagram`: Mermaid flows and line, bar and pie charts rendered in your own AWS account and posted in the thread |
 | [Deployment](docs/deployment.md) | Terraform with the S3 backend, updating, teardown, cost notes |
 | [Per-user identity & security](docs/identity-and-security.md) | Why tokens don't leak between users; session binding |
 | [Troubleshooting](docs/troubleshooting.md) | Common errors and fixes |
