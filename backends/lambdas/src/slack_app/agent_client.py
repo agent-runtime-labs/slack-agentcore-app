@@ -2,6 +2,9 @@
 
 import json
 import os
+import secrets
+import time
+import urllib.parse
 import urllib.request
 from functools import lru_cache
 
@@ -24,6 +27,18 @@ def _agentcore():
     )
 
 
+def sampled_trace_context() -> tuple[str, str]:
+    """Trace headers for one agent call, as (X-Amzn-Trace-Id, W3C traceparent), marked sampled.
+
+    Without them botocore copies the Lambda's own X-Amzn-Trace-Id onto the call. This function
+    isn't traced, so that header says Sampled=0, the agent's OpenTelemetry follows it, and
+    nothing is exported: no spans, and no sessions in GenAI Observability.
+    """
+    trace = f"{int(time.time()):08x}{secrets.token_hex(12)}"  # X-Ray's 8 hex of epoch seconds + 24 random
+    span = secrets.token_hex(8)
+    return f"Root=1-{trace[:8]}-{trace[8:]};Parent={span};Sampled=1", f"00-{trace}-{span}-01"
+
+
 def invoke_agent(
     prompt: str,
     runtime_user_id: str,
@@ -38,6 +53,7 @@ def invoke_agent(
     knowledge: dict | None = None,
     thread_ts: str | None = None,
     memory: dict | None = None,
+    trace_session_id: str | None = None,
 ) -> dict:
     """Returns the agent's JSON response: {"message": str, "authRequired": dict | None}.
     It also carries "memorySettings": true when the user asked to turn memory on or off.
@@ -56,6 +72,9 @@ def invoke_agent(
     memory says whether this user agreed to be remembered and, if so, which tiers the
     agent may save to and read from here (user_memory/scope.py); without it the agent has
     no memory at all.
+    trace_session_id is the session GenAI Observability groups this turn under, one per Slack
+    thread (identity.thread_session_id). It differs from session_id, the AgentCore runtime
+    session, which is per person. Without it the traces use session_id.
     """
     body = {
         "prompt": prompt,
@@ -73,12 +92,15 @@ def invoke_agent(
         body["knowledge"] = knowledge
     if memory:
         body["memory"] = memory
+    if trace_session_id:
+        body["traceSessionId"] = trace_session_id
     payload = json.dumps(body)
 
     local_url = os.getenv("AGENT_LOCAL_URL")
     if local_url:
         return _invoke_local(local_url, payload, session_id)
 
+    trace_id, trace_parent = sampled_trace_context()
     response = _agentcore().invoke_agent_runtime(
         agentRuntimeArn=os.environ["AGENT_RUNTIME_ARN"],
         qualifier="DEFAULT",
@@ -89,6 +111,11 @@ def invoke_agent(
         contentType="application/json",
         accept="application/json",
         payload=payload.encode("utf-8"),
+        traceId=trace_id,
+        traceParent=trace_parent,
+        # How OpenTelemetry learns the session: ADOT copies baggage onto spans, and GenAI
+        # Observability groups traces into sessions by their session.id.
+        baggage=f"session.id={urllib.parse.quote(trace_session_id or session_id, safe=':.')}",
     )
     return json.loads(response["response"].read())
 

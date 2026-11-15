@@ -41,12 +41,14 @@ module "agent_runtime" {
   ], local.diagram_agent_statements, local.knowledge_agent_statements, local.user_memory_agent_statements)
 
   environment_variables = merge({
-    LOG_LEVEL              = var.log_level
-    MODEL_ID               = var.model_id
-    GITHUB_MODEL_ID        = var.github_model_id
-    LINKEDIN_PROVIDER_NAME = var.linkedin_provider_name
-    GITHUB_PROVIDER_NAME   = var.github_provider_name
-    OAUTH2_RETURN_URL      = local.oauth_callback_url
+    LOG_LEVEL = var.log_level
+    # Read by main.py: whether telemetry may carry Slack text. See telemetry_capture_content.
+    TELEMETRY_CAPTURE_CONTENT = tostring(var.telemetry_capture_content)
+    MODEL_ID                  = var.model_id
+    GITHUB_MODEL_ID           = var.github_model_id
+    LINKEDIN_PROVIDER_NAME    = var.linkedin_provider_name
+    GITHUB_PROVIDER_NAME      = var.github_provider_name
+    OAUTH2_RETURN_URL         = local.oauth_callback_url
     # The agent's bot token: it posts live per-tool progress to the Slack placeholder
     # (slack_progress.py) and downloads the files people attach (slack_files.py).
     SLACK_SECRET_ARN = aws_secretsmanager_secret.slack.arn

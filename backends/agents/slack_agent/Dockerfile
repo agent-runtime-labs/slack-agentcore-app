@@ -31,8 +31,18 @@ CMD ["watchfiles", "--filter", "python", "python -m main", "/app/src"]
 # ============================================
 FROM base AS dist
 
+# Safe defaults until main.py runs: no Slack text in traces or telemetry logs. An empty
+# allow-list makes Strands replace every prompt, answer and tool input/result with
+# "[REDACTED]", and the second line stops ADOT's Bedrock instrumentation logging prompts.
+# main.py then sets both again from TELEMETRY_CAPTURE_CONTENT (telemetry_capture_content in
+# Terraform), which is how dev can read content and every other environment cannot.
+ENV OTEL_SEMCONV_STABILITY_OPT_IN=gen_ai_unredacted_attributes=
+ENV OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT=false
+
 COPY --chown=bedrock_agentcore:bedrock_agentcore src ./src
 USER bedrock_agentcore
 
 EXPOSE 8080
-CMD ["python", "-m", "main"]
+# ADOT auto-instrumentation: spans for the Strands agents, Bedrock calls, boto3 and HTTP
+# clients. Not used in localdev, which has no collector to send them to.
+CMD ["opentelemetry-instrument", "python", "-m", "main"]

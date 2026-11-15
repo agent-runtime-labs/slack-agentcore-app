@@ -29,6 +29,10 @@ knowledge_excluded_channels = []
 # the slack_interactions_url output (docs/slack-setup.md).
 user_memory_enabled = true
 
+# Dev only: readable prompts, thread text and answers in traces and telemetry logs. Anyone who
+# can read this account's CloudWatch can read the conversations. Leave it out elsewhere.
+telemetry_capture_content = true
+
 default_tags = {
   project     = "slack-agentcore-app"
   environment = "dev"
