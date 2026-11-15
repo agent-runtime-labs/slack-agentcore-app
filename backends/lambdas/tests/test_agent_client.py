@@ -28,6 +28,7 @@ def test_every_agent_call_carries_a_sampled_trace_context(monkeypatch):
     assert xray.group(1) + xray.group(2) == w3c.group(1)
     assert xray.group(3) == w3c.group(2)
     assert first["traceId"] != second["traceId"]
+    assert first["baggage"] == f"session.id={'s' * 64}"
 
 
 def test_trace_ids_start_with_the_time_as_x_ray_requires():

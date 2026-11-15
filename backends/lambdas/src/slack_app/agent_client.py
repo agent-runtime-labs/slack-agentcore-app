@@ -99,6 +99,9 @@ def invoke_agent(
         payload=payload.encode("utf-8"),
         traceId=trace_id,
         traceParent=trace_parent,
+        # How OpenTelemetry learns the session: ADOT copies baggage onto spans, and GenAI
+        # Observability groups traces into sessions by their session.id. It's a SHA-256 hex digest.
+        baggage=f"session.id={session_id}",
     )
     return json.loads(response["response"].read())
 
