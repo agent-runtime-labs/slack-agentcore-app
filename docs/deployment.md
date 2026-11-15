@@ -21,6 +21,7 @@ Not managed by Terraform: the LinkedIn and GitHub OAuth2 credential providers (s
 - You've done the local setup in [getting-started.md](getting-started.md), at least step 3 (`make identity`).
 - Docker is running (Terraform builds the images) and Terraform is ≥ 1.11.
 - You have an S3 bucket for Terraform state.
+- To see traces: **CloudWatch Transaction Search** enabled once per account and region, see [Observability](#enable-transaction-search-once-per-account-and-region). Without it the agent still runs, you just won't see its spans.
 
 ## Steps
 
@@ -103,6 +104,64 @@ Full step-by-step expectations for each flow are in [testing-guide.md § 7](test
 - **Code:** edit, then `./tf-wrapper.sh dev apply`. The changed image is rebuilt and the functions and runtime are updated.
 - **Model:** set `model_id` (chat) or `triage_model_id` in the tfvars (for example `us.amazon.nova-pro-v1:0`), then apply. IAM follows automatically. Cheaper models are more likely to misjudge when to answer, ask or stay quiet.
 - **CI-built images:** pass `-var agent_image_tag=<tag> -var lambda_image_tag=<tag>` to skip local builds.
+
+## Observability
+
+The agent image starts under AWS Distro for OpenTelemetry, so every turn that reaches the Runtime shows up in **CloudWatch → GenAI Observability → Bedrock AgentCore** (needs Transaction Search, see Prerequisites).
+
+| AgentCore term | Here |
+|---|---|
+| **Session** | One Slack thread per person: the `runtimeSessionId` from [identity.py](../backends/lambdas/src/slack_app/identity.py). |
+| **Trace** | One `InvokeAgentRuntime` call: a reply, or a correction. |
+| **Span** | `invoke_agent slack_assistant` → `execute_event_loop_cycle` → `chat` (each model call) and `execute_tool <name>`. `use_github` and the CIMD tools nest an `invoke_agent github_agent` / `linear_agent` / `notion_agent` span with that sub-agent's own model and MCP calls. |
+
+Filter traces on `slack.mode` (`reply` or `correct`), `slack.thread_messages`, `slack.files`, `knowledge.scope` and `diagrams.enabled`.
+
+**No Slack text, names or IDs go into traces.** The image sets `OTEL_SEMCONV_STABILITY_OPT_IN=gen_ai_unredacted_attributes=`, which makes Strands replace every prompt, answer, system prompt and tool input or result with `[REDACTED]`. Timings, token counts and tool names remain. The session is the hashed `runtimeSessionId`, so finding a thread's trace means computing that hash, not searching by channel. To see content while debugging, override `OTEL_SEMCONV_STABILITY_OPT_IN` on the runtime for a short time. Locally (Tilt) there is no collector, so nothing is exported.
+
+This covers the Runtime only. The `slack-events` and `agent-worker` Lambdas are not traced yet, so a trace starts at `InvokeAgentRuntime` and does not link back to the Slack event.
+
+### Enable Transaction Search (once per account and region)
+
+It sends X-Ray spans to the `aws/spans` CloudWatch log group, which is where the GenAI Observability dashboard reads them. It is account-wide, not part of this Terraform. Use the same region as `region` in your tfvars.
+
+```bash
+export AWS_REGION=us-east-1
+ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+
+# 1. Let X-Ray write to the two log groups it uses.
+aws logs put-resource-policy --policy-name TransactionSearchAccessPolicy --policy-document "{
+  \"Version\": \"2012-10-17\",
+  \"Statement\": [{
+    \"Sid\": \"TransactionSearchXRayAccess\",
+    \"Effect\": \"Allow\",
+    \"Principal\": {\"Service\": \"xray.amazonaws.com\"},
+    \"Action\": \"logs:PutLogEvents\",
+    \"Resource\": [
+      \"arn:aws:logs:$AWS_REGION:$ACCOUNT_ID:log-group:aws/spans:*\",
+      \"arn:aws:logs:$AWS_REGION:$ACCOUNT_ID:log-group:/aws/application-signals/data:*\"
+    ],
+    \"Condition\": {
+      \"ArnLike\": {\"aws:SourceArn\": \"arn:aws:xray:$AWS_REGION:$ACCOUNT_ID:*\"},
+      \"StringEquals\": {\"aws:SourceAccount\": \"$ACCOUNT_ID\"}
+    }
+  }]
+}"
+
+# 2. Send trace segments to CloudWatch Logs.
+aws xray update-trace-segment-destination --destination CloudWatchLogs
+
+# 3. Wait until the destination reports ACTIVE (can take a few minutes).
+aws xray get-trace-segment-destination
+```
+
+Spans are stored whatever the indexing rate, which only sets how many traces are searchable as summaries. The default is 1%. For a dev stack where you want to find every trace, raise it:
+
+```bash
+aws xray update-indexing-rule --name Default --rule '{"Probabilistic": {"DesiredSamplingPercentage": 100}}'
+```
+
+Then send a message to the bot and open **CloudWatch → GenAI Observability → Bedrock AgentCore**. Spans usually take a few minutes to appear after the first request.
 
 ## Other environments
 

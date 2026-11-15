@@ -168,6 +168,7 @@ def run_mcp_agent(provider: CimdProvider, access_token: str, request: str) -> st
     mcp_client = MCPClient(url=provider.mcp_url, headers={"Authorization": f"Bearer {access_token}"})
     with mcp_client:
         sub_agent = Agent(
+            name=f"{provider.key}_agent",  # names its span in traces: "invoke_agent linear_agent"
             model=_sub_agent_model(),
             system_prompt=_system_prompt(provider),
             tools=mcp_client.list_tools_sync(),

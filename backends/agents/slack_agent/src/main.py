@@ -108,6 +108,7 @@ into your reply, Slack shows it as plain text. Skip the diagram for short or sim
 # rather than fetched anonymously (which would only get a sign-in page).
 GITHUB_LINK_HOSTS = ("github.com",)
 
+MODE_REPLY = "reply"
 MODE_CORRECT = "correct"
 NO_CORRECTION = "NO_CORRECTION"
 
@@ -205,10 +206,14 @@ def invoke(payload: dict, context: RequestContext) -> dict:
         tools.append(build_draw_diagram_tool(channel, thread_ts))
 
     agent = Agent(
+        name="slack_assistant",
         model=model,
         system_prompt=_SYSTEM_PROMPTS[bool(scope), diagrams],
         tools=tools,
         callback_handler=progress.on_event,
+        trace_attributes=_trace_attributes(
+            MODE_REPLY, thread=len(thread), files=len(attachments.latest), knowledge=scope, diagrams=diagrams
+        ),
     )
 
     logger.info(
@@ -224,6 +229,23 @@ def invoke(payload: dict, context: RequestContext) -> dict:
     return {"message": str(result).strip(), "authRequired": auth_state.as_dict()}
 
 
+def _trace_attributes(
+    mode: str, *, thread: int = 0, files: int = 0, knowledge: Scope | None = None, diagrams: bool = False
+) -> dict:
+    """Span attributes for filtering traces: enums and counts only.
+
+    No Slack IDs, names or text. The session ID and user ID reach the spans from AgentCore
+    itself, and the Dockerfile redacts prompt and answer text.
+    """
+    return {
+        "slack.mode": mode,
+        "slack.thread_messages": thread,
+        "slack.files": files,
+        "knowledge.scope": knowledge.scope if knowledge else "off",
+        "diagrams.enabled": diagrams,
+    }
+
+
 def _names(files) -> str:
     names = [file.name for file in files[:3]]
     more = len(files) - len(names)
@@ -232,7 +254,14 @@ def _names(files) -> str:
 
 def _correct(user_prompt: str) -> dict:
     """No tools: a correction may only rely on what the bot already posted in the thread."""
-    agent = Agent(model=model, system_prompt=CORRECTION_PROMPT, tools=[], callback_handler=None)
+    agent = Agent(
+        name="slack_correction",
+        model=model,
+        system_prompt=CORRECTION_PROMPT,
+        tools=[],
+        callback_handler=None,
+        trace_attributes=_trace_attributes(MODE_CORRECT),
+    )
     answer = str(agent(user_prompt)).strip()
     return {"message": "" if not answer or NO_CORRECTION in answer else answer, "authRequired": None}
 

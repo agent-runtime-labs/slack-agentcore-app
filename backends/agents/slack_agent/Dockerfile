@@ -31,8 +31,16 @@ CMD ["watchfiles", "--filter", "python", "python -m main", "/app/src"]
 # ============================================
 FROM base AS dist
 
+# Traces carry timings, token counts and tool names, never Slack text. An empty allow-list
+# makes Strands replace every prompt, answer and tool input/result with "[REDACTED]". To
+# see content while debugging, set OTEL_SEMCONV_STABILITY_OPT_IN on the runtime (e.g.
+# gen_ai_unredacted_attributes=gen_ai.input.messages;gen_ai.output.messages) and revert it.
+ENV OTEL_SEMCONV_STABILITY_OPT_IN=gen_ai_unredacted_attributes=
+
 COPY --chown=bedrock_agentcore:bedrock_agentcore src ./src
 USER bedrock_agentcore
 
 EXPOSE 8080
-CMD ["python", "-m", "main"]
+# ADOT auto-instrumentation: spans for the Strands agents, Bedrock calls, boto3 and HTTP
+# clients. Not used in localdev, which has no collector to send them to.
+CMD ["opentelemetry-instrument", "python", "-m", "main"]

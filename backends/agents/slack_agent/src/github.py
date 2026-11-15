@@ -114,6 +114,7 @@ def _run_github_mcp_agent(access_token: str, request: str) -> str:
     try:
         with mcp_client:
             github_agent = Agent(
+                name="github_agent",  # names its span in traces: "invoke_agent github_agent"
                 model=_github_agent_model(),
                 system_prompt=GITHUB_AGENT_SYSTEM_PROMPT,
                 tools=mcp_client.list_tools_sync(),

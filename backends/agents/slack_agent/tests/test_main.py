@@ -74,6 +74,27 @@ def test_correct_mode_has_no_tools():
     assert result == {"message": "Small correction: it's 3 PRs (from my list above).", "authRequired": None}
 
 
+def test_traces_carry_counts_and_enums_but_no_slack_identifiers():
+    main.invoke(_payload(thread=THREAD, requester="Bob", channel="C123", threadTs="1.0", messageTs="2.0"), SESSION)
+    main.invoke(_payload(thread=THREAD, mode="correct"), SESSION)
+
+    reply, correction = created
+    assert reply.kwargs["name"] == "slack_assistant"
+    assert reply.kwargs["trace_attributes"] == {
+        "slack.mode": "reply",
+        "slack.thread_messages": 1,
+        "slack.files": 0,
+        "knowledge.scope": "off",
+        "diagrams.enabled": False,
+    }
+    assert correction.kwargs["name"] == "slack_correction"
+    assert correction.kwargs["trace_attributes"]["slack.mode"] == "correct"
+    # Nothing that identifies a person, a channel or a thread, and no message text.
+    flat = repr([reply.kwargs["trace_attributes"], correction.kwargs["trace_attributes"]])
+    for leaked in ("Bob", "C123", "slack-T1", "open PRs", "1.0", "2.0"):
+        assert leaked not in flat
+
+
 @pytest.mark.parametrize("answer", [main.NO_CORRECTION, f" {main.NO_CORRECTION}.", ""])
 def test_nothing_to_correct_returns_empty_message(answer):
     FakeAgent.answer = answer
