@@ -2,6 +2,8 @@
 
 import json
 import os
+import secrets
+import time
 import urllib.request
 from functools import lru_cache
 
@@ -22,6 +24,18 @@ def _agentcore():
         "bedrock-agentcore",
         config=Config(read_timeout=TIMEOUT_SECONDS, retries={"total_max_attempts": 1}),
     )
+
+
+def sampled_trace_context() -> tuple[str, str]:
+    """Trace headers for one agent call, as (X-Amzn-Trace-Id, W3C traceparent), marked sampled.
+
+    Without them botocore copies the Lambda's own X-Amzn-Trace-Id onto the call. This function
+    isn't traced, so that header says Sampled=0, the agent's OpenTelemetry follows it, and
+    nothing is exported: no spans, and no sessions in GenAI Observability.
+    """
+    trace = f"{int(time.time()):08x}{secrets.token_hex(12)}"  # X-Ray's 8 hex of epoch seconds + 24 random
+    span = secrets.token_hex(8)
+    return f"Root=1-{trace[:8]}-{trace[8:]};Parent={span};Sampled=1", f"00-{trace}-{span}-01"
 
 
 def invoke_agent(
@@ -72,6 +86,7 @@ def invoke_agent(
     if local_url:
         return _invoke_local(local_url, payload, session_id)
 
+    trace_id, trace_parent = sampled_trace_context()
     response = _agentcore().invoke_agent_runtime(
         agentRuntimeArn=os.environ["AGENT_RUNTIME_ARN"],
         qualifier="DEFAULT",
@@ -82,6 +97,8 @@ def invoke_agent(
         contentType="application/json",
         accept="application/json",
         payload=payload.encode("utf-8"),
+        traceId=trace_id,
+        traceParent=trace_parent,
     )
     return json.loads(response["response"].read())
 

@@ -119,6 +119,8 @@ Filter traces on `slack.mode` (`reply` or `correct`), `slack.thread_messages`, `
 
 **No Slack text, names or IDs go into traces or telemetry logs.** Two things carry prompt text and both are switched off. The image sets `OTEL_SEMCONV_STABILITY_OPT_IN=gen_ai_unredacted_attributes=`, which makes Strands replace every prompt, answer, system prompt and tool input or result in its spans with `[REDACTED]`. ADOT's Bedrock instrumentation separately logs the same text as log events into the runtime log group when `OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT` is `true`, which the platform turns on, so `main.py` pins it to `false`. Timings, token counts and tool names remain. The session is the hashed `runtimeSessionId`, so finding a thread's trace means computing that hash, not searching by channel. To see content while debugging, you would have to change both settings in code and the image, and revert it afterwards. Locally (Tilt) there is no collector, so nothing is exported.
 
+The worker starts each trace itself and sends it, marked sampled, on `InvokeAgentRuntime` ([agent_client.py](../backends/lambdas/src/slack_app/agent_client.py)). Without that, botocore passes the Lambda's own trace header, which is unsampled because the Lambda isn't traced, and the agent exports nothing: no spans, and an empty **OTEL sessions** table.
+
 This covers the Runtime only. The `slack-events` and `agent-worker` Lambdas are not traced yet, so a trace starts at `InvokeAgentRuntime` and does not link back to the Slack event.
 
 ### Enable Transaction Search (once per account and region)
