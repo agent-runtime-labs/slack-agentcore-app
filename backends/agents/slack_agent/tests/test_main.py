@@ -1,4 +1,5 @@
 import importlib
+import os
 import sys
 from pathlib import Path
 from types import SimpleNamespace
@@ -75,14 +76,53 @@ def test_correct_mode_has_no_tools():
     assert result == {"message": "Small correction: it's 3 PRs (from my list above).", "authRequired": None}
 
 
-def test_the_bedrock_instrumentation_does_not_log_prompt_text(monkeypatch):
+TELEMETRY_VARS = ("OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT", "OTEL_SEMCONV_STABILITY_OPT_IN")
+
+
+@pytest.fixture
+def telemetry_env(monkeypatch):
+    """Lets a test reload main under its own TELEMETRY_CAPTURE_CONTENT and puts the variables back."""
+    for name in (*TELEMETRY_VARS, "TELEMETRY_CAPTURE_CONTENT"):
+        monkeypatch.delenv(name, raising=False)
+    # main.py writes these straight into os.environ: have monkeypatch restore them afterwards.
+    for name in TELEMETRY_VARS:
+        monkeypatch.setenv(name, "")
+    yield monkeypatch
+    monkeypatch.delenv("TELEMETRY_CAPTURE_CONTENT", raising=False)
+    importlib.reload(main)
+
+
+def test_telemetry_carries_no_slack_text_by_default(telemetry_env):
     from opentelemetry.instrumentation.botocore.extensions.bedrock_utils import genai_capture_message_content
 
-    # Whatever the platform sets before our code runs, importing main pins it off.
-    monkeypatch.setenv("OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT", "true")
+    # Whatever the platform turns on before our code runs, importing main pins it off.
+    telemetry_env.setenv("OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT", "true")
     assert genai_capture_message_content() is True
     importlib.reload(main)
+
     assert genai_capture_message_content() is False
+    # An empty allow-list: Strands redacts every prompt, answer and tool input/result.
+    assert os.environ["OTEL_SEMCONV_STABILITY_OPT_IN"] == "gen_ai_unredacted_attributes="
+
+
+@pytest.mark.parametrize("value", ["", "false", "0", "yes", "1", " true"])
+def test_anything_but_true_keeps_content_out_of_telemetry(telemetry_env, value):
+    telemetry_env.setenv("TELEMETRY_CAPTURE_CONTENT", value)
+    importlib.reload(main)
+    assert os.environ["OTEL_SEMCONV_STABILITY_OPT_IN"] == "gen_ai_unredacted_attributes="
+    assert os.environ["OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT"] == "false"
+
+
+@pytest.mark.parametrize("value", ["true", "TRUE", "True"])
+def test_dev_can_turn_content_capture_on(telemetry_env, value):
+    from opentelemetry.instrumentation.botocore.extensions.bedrock_utils import genai_capture_message_content
+
+    telemetry_env.setenv("TELEMETRY_CAPTURE_CONTENT", value)
+    importlib.reload(main)
+
+    assert genai_capture_message_content() is True
+    allowed = os.environ["OTEL_SEMCONV_STABILITY_OPT_IN"].removeprefix("gen_ai_unredacted_attributes=").split(";")
+    assert sorted(allowed) == ["gen_ai.input.messages", "gen_ai.output.messages", "gen_ai.system_instructions"]
 
 
 def test_traces_carry_counts_and_enums_but_no_slack_identifiers():

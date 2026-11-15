@@ -60,11 +60,18 @@ from web_fetch import build_fetch_url_tool
 logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO"))
 logger = logging.getLogger("slack_agent")
 
-# ADOT's Bedrock instrumentation writes every prompt, thread and answer to the runtime's log
-# group as log events when this is "true", and something in the platform turns it on (it is not
-# in our image or Terraform). It is read on every call, so pinning it here wins. Telemetry may
-# carry timings, token counts and tool names, never Slack text.
-os.environ["OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT"] = "false"
+# Telemetry carries session IDs, timings, token counts and tool names. It carries Slack text
+# (prompts, the thread, answers, tool results) only when TELEMETRY_CAPTURE_CONTENT=true, which
+# Terraform sets from telemetry_capture_content and only the dev tfvars turn on.
+# Two things carry that text, so one switch sets both: Strands' spans and events, redacted
+# unless their attributes are allow-listed, and ADOT's Bedrock instrumentation, which logs it
+# unless told not to. The platform turns that one on, so it is pinned here: it is read on
+# every call, and Strands reads the other when the first Agent is built, after this runs.
+CAPTURE_CONTENT = os.getenv("TELEMETRY_CAPTURE_CONTENT", "").lower() == "true"
+os.environ["OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT"] = "true" if CAPTURE_CONTENT else "false"
+os.environ["OTEL_SEMCONV_STABILITY_OPT_IN"] = "gen_ai_unredacted_attributes=" + (
+    "gen_ai.input.messages;gen_ai.output.messages;gen_ai.system_instructions" if CAPTURE_CONTENT else ""
+)
 
 BASE_SYSTEM_PROMPT = """You are an AI assistant taking part in a Slack thread alongside people. Behave like a helpful
 colleague: add to the conversation, don't take it over.
@@ -242,7 +249,8 @@ def _trace_attributes(
 
     `session.id` is what GenAI Observability groups traces into sessions by, so it must be on
     the spans. It is the worker's SHA-256 of (team, channel, thread, user), which can't be
-    turned back into any of them. No Slack IDs, names or text: the Dockerfile redacts those.
+    turned back into any of them. No Slack IDs, names or text; message text is covered by
+    CAPTURE_CONTENT above.
     """
     return {
         "session.id": session_id,

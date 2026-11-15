@@ -31,13 +31,12 @@ CMD ["watchfiles", "--filter", "python", "python -m main", "/app/src"]
 # ============================================
 FROM base AS dist
 
-# Traces carry timings, token counts and tool names, never Slack text. An empty allow-list
-# makes Strands replace every prompt, answer and tool input/result with "[REDACTED]". To
-# see content while debugging, set OTEL_SEMCONV_STABILITY_OPT_IN on the runtime (e.g.
-# gen_ai_unredacted_attributes=gen_ai.input.messages;gen_ai.output.messages) and revert it.
+# Safe defaults until main.py runs: no Slack text in traces or telemetry logs. An empty
+# allow-list makes Strands replace every prompt, answer and tool input/result with
+# "[REDACTED]", and the second line stops ADOT's Bedrock instrumentation logging prompts.
+# main.py then sets both again from TELEMETRY_CAPTURE_CONTENT (telemetry_capture_content in
+# Terraform), which is how dev can read content and every other environment cannot.
 ENV OTEL_SEMCONV_STABILITY_OPT_IN=gen_ai_unredacted_attributes=
-# The same for ADOT's Bedrock instrumentation, which logs prompt text separately from Strands'
-# spans. main.py pins it too, because the platform can override an image default.
 ENV OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT=false
 
 COPY --chown=bedrock_agentcore:bedrock_agentcore src ./src
