@@ -123,43 +123,15 @@ This covers the Runtime only. The `slack-events` and `agent-worker` Lambdas are 
 
 ### Enable Transaction Search (once per account and region)
 
-It sends X-Ray spans to the `aws/spans` CloudWatch log group, which is where the GenAI Observability dashboard reads them. It is account-wide, not part of this Terraform. Use the same region as `region` in your tfvars.
+It sends X-Ray spans to the `aws/spans` CloudWatch log group, which is where the GenAI Observability dashboard reads them. It is account-wide (everything in the account that sends X-Ray spans is affected), so it is a script and not part of this Terraform. Use the same region as `region` in your tfvars.
 
 ```bash
-export AWS_REGION=us-east-1
-ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
-
-# 1. Let X-Ray write to the two log groups it uses.
-aws logs put-resource-policy --policy-name TransactionSearchAccessPolicy --policy-document "{
-  \"Version\": \"2012-10-17\",
-  \"Statement\": [{
-    \"Sid\": \"TransactionSearchXRayAccess\",
-    \"Effect\": \"Allow\",
-    \"Principal\": {\"Service\": \"xray.amazonaws.com\"},
-    \"Action\": \"logs:PutLogEvents\",
-    \"Resource\": [
-      \"arn:aws:logs:$AWS_REGION:$ACCOUNT_ID:log-group:aws/spans:*\",
-      \"arn:aws:logs:$AWS_REGION:$ACCOUNT_ID:log-group:/aws/application-signals/data:*\"
-    ],
-    \"Condition\": {
-      \"ArnLike\": {\"aws:SourceArn\": \"arn:aws:xray:$AWS_REGION:$ACCOUNT_ID:*\"},
-      \"StringEquals\": {\"aws:SourceAccount\": \"$ACCOUNT_ID\"}
-    }
-  }]
-}"
-
-# 2. Send trace segments to CloudWatch Logs.
-aws xray update-trace-segment-destination --destination CloudWatchLogs
-
-# 3. Wait until the destination reports ACTIVE (can take a few minutes).
-aws xray get-trace-segment-destination
+./infra-as-code/scripts/transaction-search.sh status   -r us-east-1            # read-only
+./infra-as-code/scripts/transaction-search.sh enable   -r us-east-1 -i 100     # -n for a dry run
+./infra-as-code/scripts/transaction-search.sh disable  -r us-east-1
 ```
 
-Spans are stored whatever the indexing rate, which only sets how many traces are searchable as summaries. The default is 1%. For a dev stack where you want to find every trace, raise it:
-
-```bash
-aws xray update-indexing-rule --name Default --rule '{"Probabilistic": {"DesiredSamplingPercentage": 100}}'
-```
+`-p <profile>` picks an AWS CLI profile, and `-y` skips the prompt that asks you to type the account ID. `enable` lets X-Ray write to the `aws/spans` and `/aws/application-signals/data` log groups, points the trace destination at CloudWatch Logs and waits for it to be `ACTIVE`; it is safe to run again. `-i` sets the indexing rate, the share of traces searchable as summaries (spans are stored whatever it is). An account's default is 1, so `-i 100` is handy on a dev stack. `disable` points the destination back at X-Ray and removes the log policy `enable` added. Spans already in `aws/spans` stay until its retention removes them.
 
 Then send a message to the bot and open **CloudWatch → GenAI Observability → Bedrock AgentCore**. Spans usually take a few minutes to appear after the first request.
 
