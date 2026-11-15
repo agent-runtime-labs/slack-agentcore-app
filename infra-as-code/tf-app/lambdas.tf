@@ -1,5 +1,5 @@
 ################################################################################
-# Lambda functions (one image, four handlers; the fourth, knowledge-indexer, is in knowledge.tf)
+# Lambda functions (one image, five handlers; the fifth, knowledge-indexer, is in knowledge.tf)
 ################################################################################
 
 module "lambda_image" {
@@ -59,6 +59,27 @@ module "slack_events_fn" {
   })
 }
 
+# POST /slack/interactions: every button click in Slack. Always deployed, because Slack
+# posts here even for link buttons ("Connect GitHub") and flags them unless it gets a 200.
+# With user_memory_enabled it also records a person's memory choice (memory.tf), and only
+# then can it reach the consent table and the queue.
+module "slack_button_clicks_fn" {
+  source = "../tf-modules/aws/lambda-function"
+
+  name        = "${local.name_prefix}-slack-button-clicks"
+  description = "Acknowledges Slack button clicks and records a user's choice about being remembered"
+  image_uri   = module.lambda_image.image_uri
+  command     = ["slack_app.handlers.slack_button_clicks.handler"]
+  timeout     = 10
+
+  environment_variables = merge(local.lambda_common_env, local.user_memory_clicks_env)
+
+  policy_json = jsonencode({
+    Version   = "2012-10-17"
+    Statement = concat([local.read_slack_secret], local.user_memory_clicks_statements)
+  })
+}
+
 # SQS consumer: invoke AgentCore Runtime as the Slack user, reply in Slack.
 module "agent_worker_fn" {
   source = "../tf-modules/aws/lambda-function"
@@ -79,11 +100,12 @@ module "agent_worker_fn" {
     TRIAGE_MODEL_ID = var.triage_model_id
     # With team knowledge on, works out which past threads the agent may search from the
     # channel (Slack API only: conversations.info, conversations.members, users.info).
-  }, local.knowledge_worker_env)
+    # With per-user memory on, reads each person's consent and deletes their memory on request.
+  }, local.knowledge_worker_env, local.user_memory_worker_env)
 
   policy_json = jsonencode({
     Version = "2012-10-17"
-    Statement = [
+    Statement = concat([
       local.read_slack_secret,
       {
         Effect   = "Allow"
@@ -111,7 +133,7 @@ module "agent_worker_fn" {
         Action   = ["bedrock:InvokeModel"]
         Resource = local.triage_model_resource_arns
       },
-    ]
+    ], local.user_memory_worker_statements)
   })
 }
 

@@ -286,3 +286,83 @@ def test_diagram_tool_only_with_a_renderer_and_a_thread(monkeypatch):
     assert on.kwargs["tools"][-1] == "diagram-tool:C1:1.1"
     assert "draw_diagram" in on.kwargs["system_prompt"]
     assert "diagram-tool" not in str(no_thread.kwargs["tools"])
+
+
+MEMORY = {"granted": True, "learn": "public", "recall": ["public"]}
+
+
+@pytest.fixture
+def memory(monkeypatch):
+    """Per-user memory switched on, with recall and remember recorded instead of calling AWS."""
+    saved = []
+    monkeypatch.setattr(main.config, "USER_MEMORY_ID", "mem-store-1")
+    monkeypatch.setattr(main.user_memory, "recall", lambda scope, query: [f"Prefers bullets ({','.join(scope.recall)})"])
+    monkeypatch.setattr(main.user_memory, "remember", lambda *args: saved.append(args))
+    monkeypatch.setattr(main.user_memory, "build_memory_settings_tool", lambda request: "memory-settings-tool")
+    return saved
+
+
+def test_without_per_user_memory_nothing_is_read_saved_or_offered(memory, monkeypatch):
+    monkeypatch.setattr(main.config, "USER_MEMORY_ID", "")
+    result = main.invoke(_payload(memory=MEMORY), SESSION)
+    main.invoke(_payload(), SESSION)  # switched on, but the worker sent nothing
+
+    for agent in created:
+        assert "memory-settings-tool" not in agent.kwargs["tools"]
+        assert "<about_requester>" not in agent.prompt
+        assert agent.kwargs["system_prompt"] == main.SYSTEM_PROMPT
+    assert memory == []
+    assert result == {"message": "ok", "authRequired": None}
+
+
+def test_with_consent_notes_are_added_and_the_turn_is_saved(memory):
+    main.invoke(_payload(prompt="why is my Lambda timing out?", memory=MEMORY, thread=THREAD), SESSION)
+
+    (agent,) = created
+    assert "- Prefers bullets (public)" in agent.prompt
+    assert main.MEMORY_ON_RULE in agent.kwargs["system_prompt"]
+    assert agent.kwargs["tools"][-1] == "memory-settings-tool"
+    ((scope, session_id, said, answer, used),) = memory
+    assert (scope.user_id, scope.learn) == ("slack-T1-UBOB", "public")
+    assert session_id == "s" * 64
+    # Only the requester's own message is saved: never the thread other people wrote.
+    assert said == "why is my Lambda timing out?"
+    assert answer == "ok"
+    assert used == set()
+
+
+def test_without_consent_nothing_is_read_or_saved_but_settings_are_on_offer(memory):
+    main.invoke(_payload(memory={"granted": False}), SESSION)
+
+    (agent,) = created
+    assert "<about_requester>" not in agent.prompt
+    assert main.MEMORY_OFF_RULE in agent.kwargs["system_prompt"]
+    assert agent.kwargs["tools"][-1] == "memory-settings-tool"
+    assert memory == []
+
+
+def test_correct_mode_never_touches_memory(memory):
+    main.invoke(_payload(thread=THREAD, mode="correct", memory=MEMORY), SESSION)
+    assert created[0].kwargs["tools"] == []
+    assert memory == []
+
+
+def test_nothing_is_saved_when_the_answer_is_connect_your_account(memory, monkeypatch):
+    def needs_consent(get_token, auth_state):
+        auth_state.provider, auth_state.authorization_url = "GitHub", "https://gh/auth"
+        return "github-tool"
+
+    monkeypatch.setattr(main, "build_github_tool", needs_consent)
+    result = main.invoke(_payload(memory=MEMORY), SESSION)
+    assert result["authRequired"]["provider"] == "GitHub"
+    assert memory == []
+
+
+def test_asking_for_memory_settings_is_passed_on_to_the_worker(memory, monkeypatch):
+    def flagging_tool(request):
+        request.requested = True
+        return "memory-settings-tool"
+
+    monkeypatch.setattr(main.user_memory, "build_memory_settings_tool", flagging_tool)
+    result = main.invoke(_payload(prompt="turn off memory", memory=MEMORY), SESSION)
+    assert result == {"message": "ok", "authRequired": None, "memorySettings": True}

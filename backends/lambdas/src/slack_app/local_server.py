@@ -8,7 +8,7 @@ from fastapi import FastAPI, Request, Response
 from starlette.concurrency import run_in_threadpool
 
 from slack_app.config import is_local
-from slack_app.handlers import oauth_callback, slack_events
+from slack_app.handlers import oauth_callback, slack_button_clicks, slack_events
 
 if not is_local():
     raise RuntimeError("local_server is for local development only (set APP_ENV=local)")
@@ -55,6 +55,11 @@ def healthz() -> dict:
 @app.post("/slack/events")
 async def slack_events_route(request: Request) -> Response:
     return await _invoke(slack_events.handler, request)
+
+
+@app.post("/slack/interactions")
+async def slack_button_clicks_route(request: Request) -> Response:
+    return await _invoke(slack_button_clicks.handler, request)
 
 
 @app.get("/oauth2/start")

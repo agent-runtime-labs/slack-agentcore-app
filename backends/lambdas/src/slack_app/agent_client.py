@@ -52,9 +52,11 @@ def invoke_agent(
     mode: str = MODE_REPLY,
     knowledge: dict | None = None,
     thread_ts: str | None = None,
+    memory: dict | None = None,
     trace_session_id: str | None = None,
 ) -> dict:
     """Returns the agent's JSON response: {"message": str, "authRequired": dict | None}.
+    It also carries "memorySettings": true when the user asked to turn memory on or off.
 
     channel/message_ts identify the Slack placeholder message so the agent can post
     live per-tool progress to it directly (see slack_progress.py in the agent).
@@ -67,6 +69,9 @@ def invoke_agent(
     agent has no search_past_threads tool.
     thread_ts is the thread the placeholder sits in, where the agent posts the diagrams it
     draws (diagrams.py in the agent).
+    memory says whether this user agreed to be remembered and, if so, which tiers the
+    agent may save to and read from here (user_memory/scope.py); without it the agent has
+    no memory at all.
     trace_session_id is the session GenAI Observability groups this turn under, one per Slack
     thread (identity.thread_session_id). It differs from session_id, the AgentCore runtime
     session, which is per person. Without it the traces use session_id.
@@ -85,6 +90,8 @@ def invoke_agent(
     }
     if knowledge:
         body["knowledge"] = knowledge
+    if memory:
+        body["memory"] = memory
     if trace_session_id:
         body["traceSessionId"] = trace_session_id
     payload = json.dumps(body)

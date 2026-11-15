@@ -39,6 +39,12 @@ settings:
       - message.channels
       - message.groups
       - message.im
+  # Every button click goes here (the slack-button-clicks Lambda), including the buttons on the
+  # "may I remember you?" question with user_memory_enabled.
+  # Use terraform output slack_interactions_url (or your ngrok URL + /slack/interactions).
+  interactivity:
+    is_enabled: true
+    request_url: https://7b58-2405-201-6807-d1d3-b9b9-1a2e-4895-2ed.ngrok-free.app/slack/interactions
   org_deploy_enabled: false
   socket_mode_enabled: false
   token_rotation_enabled: false

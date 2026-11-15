@@ -34,12 +34,17 @@ def local_env(monkeypatch):
         "KNOWLEDGE_SUMMARY_MODEL_ID",
         "KNOWLEDGE_SUMMARY_FALLBACK_MODEL_ID",
         "KNOWLEDGE_SUMMARY_EFFORT",
+        "USER_MEMORY_ENABLED",
+        "USER_MEMORY_ID",
+        "MEMORY_CONSENT_TABLE",
     ):
         monkeypatch.delenv(name, raising=False)
 
     from slack_app import config, engaged_threads, pending_auth, slack
     from slack_app.knowledge import channels, store
+    from slack_app.user_memory import consent
 
+    consent.consent_store.cache_clear()
     config.slack_credentials.cache_clear()
     slack.slack_client.cache_clear()
     slack._auth_test_user_id.cache_clear()

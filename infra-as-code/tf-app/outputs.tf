@@ -3,6 +3,16 @@ output "slack_events_url" {
   value       = "${local.public_base_url}/slack/events"
 }
 
+output "slack_interactions_url" {
+  description = "Paste into Slack app > Interactivity & Shortcuts > Request URL"
+  value       = "${local.public_base_url}/slack/interactions"
+}
+
+output "user_memory_id" {
+  description = "AgentCore Memory holding per-user memory (null unless user_memory_enabled)"
+  value       = local.user_memory_id
+}
+
 output "oauth_callback_url" {
   description = "Return URL allow-listed on the runtime's workload identity"
   value       = local.oauth_callback_url

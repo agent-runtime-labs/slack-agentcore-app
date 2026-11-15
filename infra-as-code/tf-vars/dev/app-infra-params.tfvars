@@ -24,6 +24,11 @@ diagram_renderer_enabled = true
 knowledge_enabled           = true
 knowledge_excluded_channels = []
 
+# Per-user memory: asks each person whether the assistant may remember them (AgentCore
+# Memory). Before switching it on, enable Interactivity in the Slack app and point it at
+# the slack_interactions_url output (docs/slack-setup.md).
+user_memory_enabled = true
+
 # Dev only: readable prompts, thread text and answers in traces and telemetry logs. Anyone who
 # can read this account's CloudWatch can read the conversations. Leave it out elsewhere.
 telemetry_capture_content = true

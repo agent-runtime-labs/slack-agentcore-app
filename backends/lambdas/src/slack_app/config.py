@@ -43,6 +43,16 @@ def knowledge_excluded_channels() -> set[str]:
     return {channel.strip() for channel in os.getenv("KNOWLEDGE_EXCLUDED_CHANNELS", "").split(",") if channel.strip()}
 
 
+def user_memory_enabled() -> bool:
+    """Per-user memory (user_memory/): ask each person whether the bot may remember them. Off by default."""
+    return os.getenv("USER_MEMORY_ENABLED", "false").lower() == "true"
+
+
+def user_memory_id() -> str:
+    """The AgentCore Memory resource, for deleting a person's memory when they turn it off (user_memory/forget.py)."""
+    return os.getenv("USER_MEMORY_ID", "")
+
+
 def public_base_url() -> str:
     """Base URL users' browsers use to reach the OAuth endpoints (API Gateway or localhost)."""
     return os.environ["PUBLIC_BASE_URL"].rstrip("/")

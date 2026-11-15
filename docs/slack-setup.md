@@ -149,6 +149,19 @@ With `knowledge_enabled = true` in Terraform (`KNOWLEDGE_ENABLED`), the bot reme
 
 See [architecture.md](architecture.md#2d-team-knowledge-memory-optional) for how it works and [identity-and-security.md](identity-and-security.md#team-knowledge-what-one-thread-can-show-in-another) for the access rules.
 
+## Per-user memory (optional)
+
+With `user_memory_enabled = true` in Terraform (`USER_MEMORY_ENABLED`), the bot can remember what a person tells it about themselves, such as how they like answers and which projects they own, and use it in later threads.
+
+- **Only with a yes.** The first time someone talks to the bot, they get a private message asking whether it may remember them. Nothing is saved or read until they click **Yes, remember**. No click counts as no, and they are asked once.
+- **What's saved:** the person's own message to the bot and the bot's answer. Never other people's messages, files, web pages, or anything a tool returned from a connected account.
+- **Where it's used:** what was said in a DM is used in DMs only. What was said in a private channel, or a channel with a guest, is used in that channel and in DMs. What was said in a public channel is used anywhere. Nothing is saved or used in Slack Connect channels.
+- **Changing their mind:** "turn on memory" or "turn off memory" brings the buttons back. Turning it off deletes everything kept about that person.
+
+**Turning it on:** in the Slack app, open **Interactivity & Shortcuts**, switch it on and set the Request URL to the `slack_interactions_url` Terraform output (or paste the updated [manifest](slack-app-manifest.yaml)). It needs the same `channels:read`, `groups:read` and `users:read` scopes as team knowledge. Then set `user_memory_enabled = true` and `make deploy`.
+
+See [architecture.md](architecture.md#2f-per-user-memory-optional) for how it works.
+
 ## Behaviour notes
 
 - **Profile data is posted where the question was asked.** Anyone in a public channel who can read the thread will see the answer. For private data, DM the bot.

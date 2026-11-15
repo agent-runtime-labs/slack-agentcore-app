@@ -119,6 +119,24 @@ variable "knowledge_excluded_channels" {
   default     = []
 }
 
+variable "user_memory_enabled" {
+  type        = bool
+  description = <<-EOT
+    Per-user memory: ask each person whether the assistant may remember what they tell it
+    about themselves (AgentCore Memory), and use it to tailor later answers. Nothing is
+    kept for anyone who hasn't said yes. Needs Interactivity switched on in the Slack app,
+    pointing at the slack_interactions_url output (docs/slack-setup.md), and the same
+    scopes as knowledge_enabled. Off leaves the app exactly as without it.
+  EOT
+  default     = false
+}
+
+variable "user_memory_event_expiry_days" {
+  type        = number
+  description = "Days AgentCore Memory keeps the raw turns it learns from (7 to 365). What it learned from them is kept until the person turns memory off."
+  default     = 30
+}
+
 variable "telemetry_capture_content" {
   type        = bool
   default     = false

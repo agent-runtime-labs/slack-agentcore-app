@@ -54,6 +54,10 @@ k8s_object('ConfigMap', 'app-config', {
     'KNOWLEDGE_INDEX': os.getenv('KNOWLEDGE_INDEX', 'threads'),
     'KNOWLEDGE_QUIET_SECONDS': os.getenv('KNOWLEDGE_QUIET_SECONDS', '30'),
     'KNOWLEDGE_EXCLUDED_CHANNELS': os.getenv('KNOWLEDGE_EXCLUDED_CHANNELS', ''),
+    # Per-user memory: off by default. Consent is kept in memory in the slack-app pod; to
+    # save and recall for real, point USER_MEMORY_ID at the dev AgentCore Memory.
+    'USER_MEMORY_ENABLED': os.getenv('USER_MEMORY_ENABLED', 'false'),
+    'USER_MEMORY_ID': os.getenv('USER_MEMORY_ID', ''),
     # Diagrams: off unless a renderer Lambda is named (see diagrams.py in the agent). Point it
     # at the deployed dev function; your AWS profile needs lambda:InvokeFunction on it.
     'DIAGRAM_RENDER_FUNCTION': os.getenv('DIAGRAM_RENDER_FUNCTION', ''),
