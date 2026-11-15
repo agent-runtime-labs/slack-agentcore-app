@@ -28,6 +28,7 @@ set -euo pipefail
 
 POLICY_NAME="TransactionSearchAccessPolicy" # also the name used by AWS's CloudFormation sample
 WAIT_SECONDS=300
+POLL_SECONDS="${POLL_SECONDS:-10}"
 
 region="${AWS_REGION:-${AWS_DEFAULT_REGION:-us-east-1}}"
 profile="${AWS_PROFILE:-}"
@@ -106,6 +107,20 @@ print(json.dumps({
 PY
 }
 
+# AWS refuses a destination change while the previous one is still PENDING, so let it settle.
+wait_while_pending() {
+  "${dry_run}" && return 0
+  local waited=0 state
+  while ((waited < WAIT_SECONDS)); do
+    state="$(destination)"
+    [[ "${state##*$'\t'}" != "PENDING" ]] && return 0
+    echo "  an earlier change is still PENDING (${state//$'\t'/ }), waiting ..."
+    sleep "${POLL_SECONDS}"
+    waited=$((waited + POLL_SECONDS))
+  done
+  die "still PENDING after ${WAIT_SECONDS}s: run '$0 status -r ${region}' later and try again"
+}
+
 wait_until_active() {
   "${dry_run}" && return 0
   local waited=0 state
@@ -113,8 +128,8 @@ wait_until_active() {
     state="$(destination)"
     [[ "${state}" == "CloudWatchLogs"$'\t'"ACTIVE" ]] && { echo "  destination is ACTIVE"; return 0; }
     echo "  waiting (${state//$'\t'/ }) ..."
-    sleep 10
-    waited=$((waited + 10))
+    sleep "${POLL_SECONDS}"
+    waited=$((waited + POLL_SECONDS))
   done
   die "still not ACTIVE after ${WAIT_SECONDS}s: run '$0 status -r ${region}' later"
 }
@@ -133,13 +148,20 @@ show_status() {
   echo "  trace segment destination / status : ${state//$'\t'/ / }"
   echo "  indexing rate (Default rule)       : ${rate}%"
   echo "  log policy ${POLICY_NAME}: ${policy}"
-  if [[ "${state}" == "CloudWatchLogs"$'\t'"ACTIVE" ]]; then echo "  => Transaction Search is ENABLED"; else echo "  => Transaction Search is not enabled"; fi
+  if [[ "${state##*$'\t'}" == "PENDING" ]]; then
+    echo "  => a change is still in progress (usually a few minutes): wait before enabling or disabling"
+  elif [[ "${state}" == "CloudWatchLogs"$'\t'"ACTIVE" ]]; then
+    echo "  => Transaction Search is ENABLED"
+  else
+    echo "  => Transaction Search is not enabled"
+  fi
 }
 
 enable() {
   confirm
   echo "Enabling Transaction Search in account ${account}, region ${region}"
   change logs put-resource-policy --policy-name "${POLICY_NAME}" --policy-document "$(policy_document)"
+  wait_while_pending
   if [[ "$(destination | cut -f1)" == "CloudWatchLogs" ]]; then
     echo "  destination is already CloudWatchLogs"
   else
@@ -157,6 +179,7 @@ enable() {
 disable() {
   confirm
   echo "Disabling Transaction Search in account ${account}, region ${region}"
+  wait_while_pending
   if [[ "$(destination | cut -f1)" == "XRay" ]]; then
     echo "  destination is already XRay"
   else
