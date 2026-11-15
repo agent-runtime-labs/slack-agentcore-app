@@ -131,7 +131,7 @@ It sends X-Ray spans to the `aws/spans` CloudWatch log group, which is where the
 ./infra-as-code/scripts/transaction-search.sh disable  -r us-east-1
 ```
 
-`-p <profile>` picks an AWS CLI profile, and `-y` skips the prompt that asks you to type the account ID. `enable` lets X-Ray write to the `aws/spans` and `/aws/application-signals/data` log groups, points the trace destination at CloudWatch Logs and waits for it to be `ACTIVE`; it is safe to run again. `-i` sets the indexing rate, the share of traces searchable as summaries (spans are stored whatever it is). An account's default is 1, so `-i 100` is handy on a dev stack. `disable` points the destination back at X-Ray and removes the log policy `enable` added. Spans already in `aws/spans` stay until its retention removes them.
+`-p <profile>` picks an AWS CLI profile, and The account comes from that profile (or `AWS_PROFILE`), and `enable` and `disable` show it with the region and ask `y/N` first; `-y` skips the question. `enable` lets X-Ray write to the `aws/spans` and `/aws/application-signals/data` log groups, points the trace destination at CloudWatch Logs and waits for it to be `ACTIVE`; it is safe to run again. `-i` sets the indexing rate, the share of traces searchable as summaries (spans are stored whatever it is). An account's default is 1, so `-i 100` is handy on a dev stack. `disable` points the destination back at X-Ray and removes the log policy `enable` added. Spans already in `aws/spans` stay until its retention removes them.
 
 Then send a message to the bot and open **CloudWatch → GenAI Observability → Bedrock AgentCore**. Spans usually take a few minutes to appear after the first request.
 

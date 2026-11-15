@@ -15,7 +15,7 @@
 #   -i PERCENT  enable only: indexing rate, 0-100, the share of traces searchable as
 #               summaries. Spans are stored whatever it is. Left unchanged if omitted
 #               (an account's default is 1).
-#   -y          don't ask for confirmation
+#   -y          don't ask for confirmation (it shows the profile, account and region first)
 #   -n          dry run: print what would change, change nothing
 #
 # enable:  allows X-Ray to write to the aws/spans and /aws/application-signals/data log
@@ -76,9 +76,10 @@ confirm() {
   "${assume_yes}" && return 0
   "${dry_run}" && return 0
   [[ -t 0 ]] || die "not a terminal: pass -y to confirm"
-  echo "This changes Transaction Search for EVERYTHING in account ${account}, region ${region}."
-  read -r -p "Type the account ID to continue: " answer
-  [[ "${answer}" == "${account}" ]] || die "aborted"
+  echo "This changes Transaction Search for EVERYTHING in this account:"
+  echo "  profile ${profile:-${AWS_PROFILE:-default}}, account ${account}, region ${region}"
+  read -r -p "Continue? [y/N] " answer
+  [[ "${answer}" == [yY] || "${answer}" == [yY][eE][sS] ]] || die "aborted"
 }
 
 policy_document() {
@@ -128,7 +129,7 @@ show_status() {
   else
     policy="missing"
   fi
-  echo "account ${account}, region ${region}"
+  echo "profile ${profile:-${AWS_PROFILE:-default}}, account ${account}, region ${region}"
   echo "  trace segment destination / status : ${state//$'\t'/ / }"
   echo "  indexing rate (Default rule)       : ${rate}%"
   echo "  log policy ${POLICY_NAME}: ${policy}"
