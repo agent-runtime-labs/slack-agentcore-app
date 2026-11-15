@@ -60,6 +60,12 @@ from web_fetch import build_fetch_url_tool
 logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO"))
 logger = logging.getLogger("slack_agent")
 
+# ADOT's Bedrock instrumentation writes every prompt, thread and answer to the runtime's log
+# group as log events when this is "true", and something in the platform turns it on (it is not
+# in our image or Terraform). It is read on every call, so pinning it here wins. Telemetry may
+# carry timings, token counts and tool names, never Slack text.
+os.environ["OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT"] = "false"
+
 BASE_SYSTEM_PROMPT = """You are an AI assistant taking part in a Slack thread alongside people. Behave like a helpful
 colleague: add to the conversation, don't take it over.
 - Read the thread before answering. Work out what "this", "it" or "the second one" refers to, and use the facts,

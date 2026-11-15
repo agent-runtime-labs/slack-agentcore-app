@@ -36,6 +36,9 @@ FROM base AS dist
 # see content while debugging, set OTEL_SEMCONV_STABILITY_OPT_IN on the runtime (e.g.
 # gen_ai_unredacted_attributes=gen_ai.input.messages;gen_ai.output.messages) and revert it.
 ENV OTEL_SEMCONV_STABILITY_OPT_IN=gen_ai_unredacted_attributes=
+# The same for ADOT's Bedrock instrumentation, which logs prompt text separately from Strands'
+# spans. main.py pins it too, because the platform can override an image default.
+ENV OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT=false
 
 COPY --chown=bedrock_agentcore:bedrock_agentcore src ./src
 USER bedrock_agentcore

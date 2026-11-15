@@ -1,3 +1,4 @@
+import importlib
 import sys
 from pathlib import Path
 from types import SimpleNamespace
@@ -72,6 +73,16 @@ def test_correct_mode_has_no_tools():
     assert agent.kwargs["tools"] == []
     assert agent.kwargs["system_prompt"] == main.CORRECTION_PROMPT
     assert result == {"message": "Small correction: it's 3 PRs (from my list above).", "authRequired": None}
+
+
+def test_the_bedrock_instrumentation_does_not_log_prompt_text(monkeypatch):
+    from opentelemetry.instrumentation.botocore.extensions.bedrock_utils import genai_capture_message_content
+
+    # Whatever the platform sets before our code runs, importing main pins it off.
+    monkeypatch.setenv("OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT", "true")
+    assert genai_capture_message_content() is True
+    importlib.reload(main)
+    assert genai_capture_message_content() is False
 
 
 def test_traces_carry_counts_and_enums_but_no_slack_identifiers():
