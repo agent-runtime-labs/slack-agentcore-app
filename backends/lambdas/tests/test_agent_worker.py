@@ -77,6 +77,22 @@ def test_answer_replaces_placeholder(monkeypatch, slack):
     assert _messages(slack.calls) == [("update", {"channel": "C123", "ts": "1.2", "text": "Your name is Alice."})]
 
 
+def test_everyone_in_a_thread_shares_a_trace_session_but_not_a_runtime_session(monkeypatch, slack):
+    seen = []
+
+    def fake_invoke(prompt, user_id, session_id, channel, message_ts, **kwargs):
+        seen.append((session_id, kwargs["trace_session_id"]))
+        return {"message": "hi", "authRequired": None}
+
+    monkeypatch.setattr(agent_worker, "invoke_agent", fake_invoke)
+    agent_worker.process(JOB)
+    agent_worker.process({**JOB, "user": "UBOB"})
+
+    (alice_runtime, alice_trace), (bob_runtime, bob_trace) = seen
+    assert alice_runtime != bob_runtime  # each person keeps their own runtime session
+    assert alice_trace == bob_trace == "T999:C123:1.1"  # and the thread is one session in the traces
+
+
 def test_auth_required_sends_private_link(monkeypatch, slack):
     monkeypatch.setattr(
         agent_worker,
@@ -283,7 +299,14 @@ def test_unreadable_thread_falls_back_to_the_job(monkeypatch, slack):
     )
     agent_worker.process(JOB)
 
-    assert seen == {"prompt": "what's my LinkedIn name?", "thread": [], "requester": "UALICE", "files": [], "thread_ts": "1.1"}
+    assert seen == {
+        "prompt": "what's my LinkedIn name?",
+        "thread": [],
+        "requester": "UALICE",
+        "files": [],
+        "thread_ts": "1.1",
+        "trace_session_id": "T999:C123:1.1",
+    }
 
 
 TRIAGE_JOB = {

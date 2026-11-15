@@ -4,6 +4,7 @@ import json
 import os
 import secrets
 import time
+import urllib.parse
 import urllib.request
 from functools import lru_cache
 
@@ -51,6 +52,7 @@ def invoke_agent(
     mode: str = MODE_REPLY,
     knowledge: dict | None = None,
     thread_ts: str | None = None,
+    trace_session_id: str | None = None,
 ) -> dict:
     """Returns the agent's JSON response: {"message": str, "authRequired": dict | None}.
 
@@ -65,6 +67,9 @@ def invoke_agent(
     agent has no search_past_threads tool.
     thread_ts is the thread the placeholder sits in, where the agent posts the diagrams it
     draws (diagrams.py in the agent).
+    trace_session_id is the session GenAI Observability groups this turn under, one per Slack
+    thread (identity.thread_session_id). It differs from session_id, the AgentCore runtime
+    session, which is per person. Without it the traces use session_id.
     """
     body = {
         "prompt": prompt,
@@ -80,6 +85,8 @@ def invoke_agent(
     }
     if knowledge:
         body["knowledge"] = knowledge
+    if trace_session_id:
+        body["traceSessionId"] = trace_session_id
     payload = json.dumps(body)
 
     local_url = os.getenv("AGENT_LOCAL_URL")
@@ -100,8 +107,8 @@ def invoke_agent(
         traceId=trace_id,
         traceParent=trace_parent,
         # How OpenTelemetry learns the session: ADOT copies baggage onto spans, and GenAI
-        # Observability groups traces into sessions by their session.id. It's a SHA-256 hex digest.
-        baggage=f"session.id={session_id}",
+        # Observability groups traces into sessions by their session.id.
+        baggage=f"session.id={urllib.parse.quote(trace_session_id or session_id, safe=':.')}",
     )
     return json.loads(response["response"].read())
 

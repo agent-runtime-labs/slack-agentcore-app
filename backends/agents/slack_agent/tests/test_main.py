@@ -125,14 +125,18 @@ def test_dev_can_turn_content_capture_on(telemetry_env, value):
     assert sorted(allowed) == ["gen_ai.input.messages", "gen_ai.output.messages", "gen_ai.system_instructions"]
 
 
-def test_traces_carry_counts_and_enums_but_no_slack_identifiers():
-    main.invoke(_payload(thread=THREAD, requester="Bob", channel="C123", threadTs="1.0", messageTs="2.0"), SESSION)
-    main.invoke(_payload(thread=THREAD, mode="correct"), SESSION)
+def test_traces_are_grouped_by_thread_and_findable_by_channel_and_thread():
+    thread_session = "T1:C123:1731654620.123456"
+    main.invoke(_payload(thread=THREAD, requester="Bob", traceSessionId=thread_session), SESSION)
+    main.invoke(_payload(thread=THREAD, mode="correct", traceSessionId=thread_session), SESSION)
 
     reply, correction = created
     assert reply.kwargs["name"] == "slack_assistant"
     assert reply.kwargs["trace_attributes"] == {
-        "session.id": "s" * 64,
+        "session.id": thread_session,  # what the dashboard groups by: one per thread
+        "agentcore.session_id": "s" * 64,  # the per-person runtime session, as in AgentCore's own logs
+        "slack.channel_id": "C123",
+        "slack.thread_ts": "1731654620.123456",
         "slack.mode": "reply",
         "slack.thread_messages": 1,
         "slack.files": 0,
@@ -141,11 +145,30 @@ def test_traces_carry_counts_and_enums_but_no_slack_identifiers():
     }
     assert correction.kwargs["name"] == "slack_correction"
     assert correction.kwargs["trace_attributes"]["slack.mode"] == "correct"
-    assert correction.kwargs["trace_attributes"]["session.id"] == "s" * 64
-    # Nothing that identifies a person, a channel or a thread, and no message text.
-    flat = repr([reply.kwargs["trace_attributes"], correction.kwargs["trace_attributes"]])
-    for leaked in ("Bob", "C123", "slack-T1", "open PRs", "1.0", "2.0"):
+    assert correction.kwargs["trace_attributes"]["session.id"] == thread_session
+    assert correction.kwargs["trace_attributes"]["slack.channel_id"] == "C123"
+
+
+def test_traces_carry_no_user_ids_or_text():
+    main.invoke(_payload(thread=THREAD, requester="Bob", traceSessionId="T1:C123:1.0"), SESSION)
+
+    (reply,) = created
+    flat = repr(reply.kwargs["trace_attributes"])
+    for leaked in ("Bob", "UBOB", "slack-T1", "open PRs", "oldest"):
         assert leaked not in flat
+
+
+@pytest.mark.parametrize(
+    "value", [None, "", 123, "C123:1.0", "T1:C123:abc", "T1:c123:1.0", "T1:C123:1.0\nextra", "T1:C123:1.0:UBOB", "x" * 500]
+)
+def test_a_missing_or_odd_trace_session_falls_back_to_the_runtime_session(value):
+    main.invoke(_payload(thread=THREAD, traceSessionId=value), SESSION)
+
+    (reply,) = created
+    attributes = reply.kwargs["trace_attributes"]
+    assert attributes["session.id"] == "s" * 64
+    assert "slack.channel_id" not in attributes
+    assert "slack.thread_ts" not in attributes
 
 
 @pytest.mark.parametrize("answer", [main.NO_CORRECTION, f" {main.NO_CORRECTION}.", ""])
