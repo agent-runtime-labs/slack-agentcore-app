@@ -71,7 +71,7 @@ flowchart LR
 Six ideas explain most of the design:
 
 1. **Slack answers fast, the agent answers later.** Slack needs a reply within 3 seconds, so one Lambda only checks and queues the message. A second Lambda does the slow work.
-2. **The Slack thread is the only memory.** Nothing is stored between requests. The thread is read again every time and sent to the agent.
+2. **The Slack thread is the only conversation history.** The thread is read again every time and sent to the agent. What a person lets the bot remember about them (optional, see [2f](#2f-per-user-memory-optional)) is kept separately and never replaces it.
 3. **Every request runs as the person who asked.** The agent is invoked with `runtimeUserId=slack-<team>-<user>`, so Alice's tokens are never used for Bob.
 4. **Two ways to hold a user's tokens.** AWS holds them for LinkedIn and GitHub (AgentCore Identity). The app holds them for Linear and Notion (CIMD). Users see the same private "Connect" link either way.
 5. **Files and links travel as references.** Only the agent downloads a file or fetches a page, and only while answering.
@@ -344,6 +344,52 @@ flowchart LR
 - **An opaque, readable PNG.** White background at 2× resolution and a strong chart palette, because Mermaid's default is near-white on transparent and vanishes on Slack's dark theme.
 - **The tool only exists when it can finish the job:** `DIAGRAM_RENDER_FUNCTION` is set, the worker sent the thread timestamp, and the agent has the bot token (`files:write` scope). The upload URL Slack returns must be an `https` URL on a `.slack.com` host, and the bot token never goes to the renderer.
 - **Locally**, the renderer isn't part of the Tilt stack (a browser doesn't belong in the dev loop). Point `DIAGRAM_RENDER_FUNCTION` at the deployed function, or run the image under the Lambda emulator, see [diagrams.md](diagrams.md#run-the-renderer-locally).
+
+### 2f. Per-user memory (optional)
+
+Off unless `user_memory_enabled = true`. It adds the person: how they like answers, what they own, which tools they use, learned from what they tell the bot and used in later threads. It is held in **AgentCore Memory**, and only for people who said yes.
+
+```mermaid
+flowchart LR
+    U(["👤 Slack user"]):::slack
+    WK["λ agent-worker<br/>reads consent · works out the tiers"]:::aws
+    CT[("DynamoDB<br/>memory-consent")]:::data
+    IA["λ slack-button-clicks<br/>records the button click"]:::aws
+    RT["AgentCore Runtime<br/>user_memory.py"]:::agentcore
+    MEM[("AgentCore Memory<br/>events → preferences · facts")]:::agentcore
+
+    WK -- "granted?" --> CT
+    WK == "memory: {granted, learn, recall}" ==> RT
+    RT -- "ListMemoryRecords · RetrieveMemoryRecords<br/>before the answer" --> MEM
+    RT == "CreateEvent<br/>after the answer" ==> MEM
+    WK -. "private question, once" .-> U
+    U -. "Yes / No / Turn off" .-> IA
+    IA -.-> CT
+    IA -. "turned off: queue the deletion" .-> WK
+    WK -. "delete events and records" .-> MEM
+
+    classDef slack fill:#f3e5f5,stroke:#6a1b9a,color:#1a1a1a
+    classDef aws fill:#fff3e0,stroke:#e65100,color:#1a1a1a
+    classDef data fill:#e3f2fd,stroke:#1565c0,color:#1a1a1a
+    classDef agentcore fill:#e0f2f1,stroke:#00695c,color:#1a1a1a
+```
+
+- **Consent first** ([consent.py](../backends/lambdas/src/slack_app/user_memory/consent.py)). The worker reads the person's record on every request. Without `granted` for the current notice version, the agent gets no memory: no read, no write. Only a signed button click ([slack_button_clicks.py](../backends/lambdas/src/slack_app/handlers/slack_button_clicks.py)) writes `granted`. That Lambda is always deployed: it is the app's Interactivity URL, and acknowledges every button click so Slack doesn't flag link buttons such as "Connect GitHub". The model can ask for the buttons to be shown (`memory_settings`), never answer them. If the table can't be read, the request runs without memory.
+- **What is saved** ([user_memory.py](../backends/agents/slack_agent/src/user_memory.py)). After a reply, one event: the requester's own latest message and the answer. Never the thread, files or pages. If any tool ran, the answer is replaced by a stub, so nothing from a connected account or another thread is kept. Nothing is saved in correct mode or when the answer is "connect your account".
+- **What is learned.** Two built-in strategies extract records from those events in the background: `USER_PREFERENCE` into `/users/{actorId}/preferences/` and `SEMANTIC` into `/users/{actorId}/facts/` ([memory.tf](../infra-as-code/tf-app/memory.tf)). Extraction is asynchronous, so the Slack thread covers the current conversation and memory covers the next one.
+- **What is recalled.** Before a reply, every preference is listed (a style preference matters whatever the question is about) and the facts closest to the latest message are searched. They go into the prompt as delimited notes about the requester, as information, never instructions ([thread_prompt.py](../backends/agents/slack_agent/src/thread_prompt.py)).
+- **Where it may be used** ([scope.py](../backends/lambdas/src/slack_app/user_memory/scope.py)). The answer is read by everyone in the channel, so each person's memory is split into tiers by where it was said, and each tier is its own AgentCore actor (`slack-<team>-<user>-<tier>`):
+
+| Said in | Tier | Used in |
+|---|---|---|
+| A DM with the bot | `dm` | DMs only |
+| Public channel, no guests | `public` | Anywhere |
+| Private channel, or any channel with a guest | the channel ID | That channel, and DMs |
+| Slack Connect, group DM, or a channel Slack can't describe | nothing saved | nothing used |
+
+  The worker decides the tiers and the agent reads exactly those: the model never chooses what it may see.
+- **Turning it off** queues a job that deletes the person's events and records in every tier ([forget.py](../backends/lambdas/src/slack_app/user_memory/forget.py)). Reading and saving stop at the click.
+- **Not the stock Strands session manager.** `AgentCoreMemorySessionManager` saves every message the agent sees. Here the user turn carries the whole Slack thread, so other people's words would be remembered as the requester's, and tool results would be kept.
 
 ---
 
@@ -810,11 +856,11 @@ flowchart LR
 - **A nested agent, not a top-level tool list, for GitHub.** Loading dozens of verbose MCP schemas into the main agent would cost a token-vault round trip and a schema dump on *every* Slack message. The main agent sees one lazy tool, `use_github(request)`, and only pays that cost when someone asks a GitHub question.
 - **CIMD instead of AgentCore Identity for Linear and Notion.** A constraint, not a preference. AgentCore's custom OAuth2 credential providers authenticate with `CLIENT_SECRET_BASIC`/`POST`, `AWS_IAM_ID_TOKEN_JWT` or `PRIVATE_KEY_JWT`. The CIMD draft forbids shared secrets, and these servers advertise only `none` (public client + PKCE), so none of the four fits. The alternative was deprecated Dynamic Client Registration. The cost is owning the token vault. The benefit is that the next such server needs no registration, no secret and no infrastructure change. See [cimd-providers.md](cimd-providers.md).
 - **One generic CIMD implementation, not one integration per vendor.** Discovery, PKCE, refresh, the token store and the tool wrapper are provider-agnostic. Everything vendor-specific lives in one registry file.
-- **No AgentCore Memory.** Each Runtime session is a microVM that lives until it idles out (`idle_session_timeout_seconds = 300`) or hits its cap (`max_session_lifetime_seconds = 3600`), see [agent-runtime.tf](../infra-as-code/tf-app/agent-runtime.tf). Nothing is remembered between requests: the worker reads the Slack thread (first message plus the latest 30) and sends it every time, so a follow-up after the session idles out, or from someone else in the thread, has the same context. The thread goes into the prompt as delimited data, so other people's text can inform an answer but can't trigger a tool call on the requester's accounts. See [thread_prompt.py](../backends/agents/slack_agent/src/thread_prompt.py). Team knowledge ([2d](#2d-team-knowledge-memory-optional)) doesn't change this: it is what other threads concluded, searched on demand, not a conversation history.
+- **No AgentCore Memory for conversation history.** Each Runtime session is a microVM that lives until it idles out (`idle_session_timeout_seconds = 300`) or hits its cap (`max_session_lifetime_seconds = 3600`), see [agent-runtime.tf](../infra-as-code/tf-app/agent-runtime.tf). No conversation is kept between requests: the worker reads the Slack thread (first message plus the latest 30) and sends it every time, so a follow-up after the session idles out, or from someone else in the thread, has the same context. The thread goes into the prompt as delimited data, so other people's text can inform an answer but can't trigger a tool call on the requester's accounts. See [thread_prompt.py](../backends/agents/slack_agent/src/thread_prompt.py). Team knowledge ([2d](#2d-team-knowledge-memory-optional)) doesn't change this: it is what other threads concluded, searched on demand, not a conversation history. Neither does per-user memory ([2f](#2f-per-user-memory-optional)): AgentCore Memory holds what a person said about themselves, not the thread.
 - **References, not bytes, for files.** Downloading in the Lambdas would spend the 3-second budget, overflow the 256 KB SQS limit, and send images to triage for nothing. The agent downloads with the bot token it already holds for progress updates, keeps the bytes in memory for one invocation, and can only open file IDs from the thread the worker read.
-- **S3 Vectors directly, not a Bedrock Knowledge Base, for team knowledge.** A thread summary is short and self-contained, so chunking and a managed ingestion pipeline would add little. `PutVectors` and `DeleteVectors` on stable keys (`team:channel:thread_ts#problem-n`, `#learning-n`) make overwriting a re-summarised thread and deleting a thread or channel exact. Per-user memory across conversations would be AgentCore Memory's job, and is out of scope.
+- **S3 Vectors directly, not a Bedrock Knowledge Base, for team knowledge.** A thread summary is short and self-contained, so chunking and a managed ingestion pipeline would add little. `PutVectors` and `DeleteVectors` on stable keys (`team:channel:thread_ts#problem-n`, `#learning-n`) make overwriting a re-summarised thread and deleting a thread or channel exact. Per-user memory across conversations is AgentCore Memory's job, see [2f](#2f-per-user-memory-optional).
 - **Summarise on quiet, not on every message.** Each message queues a check 10 minutes out, and a check that sees a newer person's message skips. So a burst of messages costs one summary call, and all the Slack reads, model calls and vector writes happen in the indexer, outside `slack-events`' 3-second budget.
-- **One Lambda image, four handlers.** A single build is shared, and `image_config.command` selects the handler. The same code runs locally.
+- **One Lambda image, five handlers.** A single build is shared, and `image_config.command` selects the handler. The same code runs locally.
 - **Claude Haiku 4.5 on the answer path, configured per job.** `MODEL_ID` (chat loop), `TRIAGE_MODEL_ID` (the worker's reply/react/correct/ignore decision), `GITHUB_MODEL_ID` and `CIMD_MODEL_ID` (nested agents) all default to `us.anthropic.claude-haiku-4-5-20251001-v1:0`. Nova Micro used to drive the chat loop, but it couldn't reliably weigh a whole thread and hit `MaxTokensReachedException` chaining GitHub's large tool catalogue. Nested agents get 4096 output tokens, the chat loop 1024. Team knowledge summaries are the exception: they run off the answer path, once per quiet thread, and their quality caps what search can find, so `knowledge_summary_model_id` defaults to Claude Sonnet 5.5 (`global.anthropic.claude-sonnet-5-5`, with Haiku 4.5 as the fallback). The IAM policies allow-list every configured model's inference-profile and foundation-model ARNs, see [locals.tf](../infra-as-code/tf-app/locals.tf).
 - **Diagrams are rendered in our own account, in their own Lambda.** The first version posted Mermaid to the public kroki.io, which would send org data to a third party (and 403'd Python's default user agent and returned transparent PNGs). Rendering needs a browser, and putting one in the agent container would sit it next to the Slack bot token and the runtime's credentials, while a Strands shell tool would hand the model arbitrary commands there. A container-image Lambda with no secrets and an IAM-only invoke keeps the source in the account and limits what a browser exploit can reach. Self-hosted Kroki would work, but needs an always-on service and a public endpoint with auth, because the runtime isn't in a VPC. See [diagrams.md](diagrams.md#design-notes).
 - **Mermaid, not model-written code, for charts.** Mermaid is declarative, so a hostile diagram can only fail to parse, and it runs with `securityLevel: "strict"`. Charting code the model wrote (matplotlib and the like) would need a code sandbox.

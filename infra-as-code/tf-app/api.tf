@@ -40,8 +40,9 @@ resource "aws_apigatewayv2_stage" "default" {
 
 locals {
   route_functions = {
-    slack_events   = module.slack_events_fn
-    oauth_callback = module.oauth_callback_fn
+    slack_events        = module.slack_events_fn
+    slack_button_clicks = module.slack_button_clicks_fn
+    oauth_callback      = module.oauth_callback_fn
   }
 }
 
@@ -57,9 +58,11 @@ resource "aws_apigatewayv2_integration" "fn" {
 
 resource "aws_apigatewayv2_route" "this" {
   for_each = {
-    "POST /slack/events"   = "slack_events"
-    "GET /oauth2/start"    = "oauth_callback"
-    "GET /oauth2/callback" = "oauth_callback"
+    "POST /slack/events" = "slack_events"
+    # Slack's Interactivity URL: every button click, signed like events.
+    "POST /slack/interactions" = "slack_button_clicks"
+    "GET /oauth2/start"        = "oauth_callback"
+    "GET /oauth2/callback"     = "oauth_callback"
     # Our CIMD client_id. Authorization servers fetch it unauthenticated, from their
     # own infrastructure, so it must stay public.
     "GET /oauth2/client-metadata.json" = "oauth_callback"

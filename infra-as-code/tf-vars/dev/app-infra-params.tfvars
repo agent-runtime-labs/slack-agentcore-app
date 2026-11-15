@@ -24,6 +24,11 @@ diagram_renderer_enabled = true
 knowledge_enabled           = true
 knowledge_excluded_channels = []
 
+# Per-user memory: asks each person whether the assistant may remember them (AgentCore
+# Memory). Before switching it on, enable Interactivity in the Slack app and point it at
+# the slack_interactions_url output (docs/slack-setup.md).
+user_memory_enabled = true
+
 default_tags = {
   project     = "slack-agentcore-app"
   environment = "dev"

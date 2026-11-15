@@ -60,6 +60,16 @@ KNOWLEDGE_EMBEDDING_MODEL_ID = os.getenv("KNOWLEDGE_EMBEDDING_MODEL_ID", "amazon
 # Cosine similarity below which a past thread isn't worth showing the model.
 KNOWLEDGE_MIN_SIMILARITY = float(os.getenv("KNOWLEDGE_MIN_SIMILARITY", "0.35"))
 
+# --- Per-user memory (see user_memory.py) ----------------------------------------------
+
+# The AgentCore Memory resource that holds what people told the bot about themselves.
+# Empty disables memory, whatever the payload says: under Tilt it stays empty unless
+# pointed at the dev memory.
+USER_MEMORY_ID = os.getenv("USER_MEMORY_ID", "")
+
+# Relevance score below which a remembered fact isn't worth showing the model.
+USER_MEMORY_MIN_SCORE = float(os.getenv("USER_MEMORY_MIN_SCORE", "0.2"))
+
 # --- Diagrams (see diagrams.py) ---------------------------------------------------------
 
 # Name or ARN of the diagram-renderer Lambda (backends/diagram_renderer) that turns the

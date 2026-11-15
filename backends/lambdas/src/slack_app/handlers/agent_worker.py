@@ -23,16 +23,23 @@ user never has to ask the same question twice.
 With KNOWLEDGE_ENABLED, the agent also gets the scope its search_past_threads tool may
 search from this channel (knowledge/scope.py). Working it out never fails an answer: at
 worst the tool is left out.
+
+With USER_MEMORY_ENABLED, the agent is also told whether this person agreed to be
+remembered and, if so, which memory tiers it may use from this channel (user_memory/).
+Someone who hasn't been asked yet gets the question privately, once, after their answer.
+Any failure here means no memory for this answer, never a failed answer. The queue also
+carries the job that deletes a person's memory when they turn it off.
 """
 
 import json
 import logging
 import threading
 import time
+from dataclasses import dataclass
 
 from slack_app.agent_client import MODE_CORRECT, invoke_agent
 from slack_app.attachments import from_files
-from slack_app.config import knowledge_enabled, public_base_url
+from slack_app.config import knowledge_enabled, public_base_url, user_memory_enabled
 from slack_app.identity import runtime_session_id, runtime_user_id
 from slack_app.knowledge.scope import search_scope
 from slack_app.pending_auth import TTL_SECONDS, PendingAuth, new_nonce, pending_auth_store
@@ -50,6 +57,11 @@ from slack_app.slack import (
 )
 from slack_app.thread_history import Thread, ThreadMessage, read_thread, readable
 from slack_app.triage import CORRECT, IGNORE, REACT, decide
+from slack_app.user_memory import DM, FORGET, PUBLIC
+from slack_app.user_memory import prompt as memory_prompt
+from slack_app.user_memory.consent import Consent, consent_store
+from slack_app.user_memory.forget import forget
+from slack_app.user_memory.scope import memory_scope
 from slack_app.work_queue import RESUMED_AFTER_AUTH
 
 logger = logging.getLogger(__name__)
@@ -66,6 +78,11 @@ def handler(event: dict, context) -> dict:
 
 
 def process(job: dict) -> None:
+    if job.get("kind") == FORGET:
+        # Raises on failure, so SQS runs the deletion again.
+        forget(runtime_user_id(job["team_id"], job["user"]))
+        return
+
     slack = slack_client()
     thread = _read_thread(slack, job)
     # The new message as the thread shows it (names instead of <@U...>), and who sent it.
@@ -97,6 +114,7 @@ def process(job: dict) -> None:
     user_id = runtime_user_id(job["team_id"], job["user"])
     session_id = runtime_session_id(job["team_id"], job["channel"], job["thread_ts"], job["user"])
     knowledge = _knowledge_scope(slack, job)
+    memory = _memory(slack, job, user_id)
 
     timer = threading.Timer(INTERIM_DELAY_SECONDS, _interim_update, args=(slack, job))
     timer.daemon = True
@@ -113,6 +131,7 @@ def process(job: dict) -> None:
             files=[file.as_dict() for file in files],
             thread_ts=job["thread_ts"],
             **({"knowledge": knowledge} if knowledge else {}),
+            **({"memory": memory.payload} if memory.payload else {}),
         )
     except Exception:
         # Don't re-raise: an SQS retry would run the agent again and double-post.
@@ -137,6 +156,49 @@ def process(job: dict) -> None:
         _finish_reaction(slack, job, REACTION_DONE)
 
     _update(slack, job, text)
+
+    asked_for = bool(result.get("memorySettings"))
+    if memory.payload and not auth and (memory.ask or asked_for):
+        _offer_memory(slack, job, user_id, memory.consent, asked_for)
+
+
+@dataclass(frozen=True)
+class _Memory:
+    payload: dict | None = None
+    """What the agent is told: {"granted": bool} plus the scope's tiers. None switches memory off entirely."""
+    consent: Consent | None = None
+    ask: bool = False
+    """This person hasn't been shown the current notice yet."""
+
+
+def _memory(slack, job: dict, user_id: str) -> _Memory:
+    """Whether this person agreed to be remembered, and what the agent may use here. Fails closed."""
+    if not user_memory_enabled():
+        return _Memory()
+    try:
+        consent = consent_store().get(user_id)
+        if not (consent and consent.granted):
+            return _Memory({"granted": False}, consent, ask=not (consent and consent.current))
+        scope = memory_scope(slack, job["channel"], consent.tiers)
+        # A channel tier is noted before anything is saved into it, so that turning
+        # memory off can find it again. If noting it fails, nothing is saved.
+        if scope and scope["learn"] not in (DM, PUBLIC) and scope["learn"] not in consent.tiers:
+            consent_store().add_tier(user_id, scope["learn"])
+        return _Memory({"granted": True, **(scope or {})}, consent)
+    except Exception:
+        logger.warning("Couldn't work out this user's memory settings; answering without memory", exc_info=True)
+        return _Memory()
+
+
+def _offer_memory(slack, job: dict, user_id: str, consent: Consent | None, asked_for: bool) -> None:
+    """The private memory question: once per person, and again whenever they ask for their settings."""
+    try:
+        first_time = consent_store().mark_asked(user_id)
+    except Exception:
+        logger.warning("Couldn't note that the memory question was shown; not showing it", exc_info=True)
+        return
+    if first_time or asked_for:
+        memory_prompt.offer(slack, job["channel"], job["user"], job["thread_ts"], consent)
 
 
 def _read_thread(slack, job: dict) -> Thread:

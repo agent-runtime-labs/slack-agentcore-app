@@ -7,13 +7,14 @@ Request payload (sent by the agent_worker Lambda):
      "requester": "Bob", "files": [{"id": "F...", "name": "...", "mimetype": "...", "size": 123}],
      "mode": "reply" | "correct",
      "knowledge": {"scope": "public" | "public+channel" | "channel", "teamId": "T...",
-                   "channelId": "C...", "threadKey": "T...:C...:<thread ts>"}}
+                   "channelId": "C...", "threadKey": "T...:C...:<thread ts>"},
+     "memory": {"granted": true, "learn": "public", "recall": ["public"]}}
 `channel`/`messageTs` identify the Slack placeholder message; they're optional and only
 used to post live per-tool progress (see slack_progress.py) -- their absence never fails
 the request. `threadTs` is the thread they sit in, where draw_diagram posts its image
 (see diagrams.py); without it, or without DIAGRAM_RENDER_FUNCTION, the agent has no such tool.
-`thread` is the Slack thread before the new message, and the agent's only history:
-nothing is kept between requests (see thread_prompt.py). In "correct" mode the agent
+`thread` is the Slack thread before the new message, and the agent's only conversation
+history (see thread_prompt.py). In "correct" mode the agent
 gets no tools and returns an empty message unless someone misstated what it posted.
 `files` are the latest message's attachments, as references: the agent downloads them
 itself and sends them to the model with the prompt. Files earlier in the thread are
@@ -22,9 +23,15 @@ empty when the message is only files.
 `knowledge` is present only with the team knowledge memory switched on, outside DMs and
 Slack Connect channels. It gives the agent search_past_threads, limited to the threads
 this channel may see (see past_threads.py).
+`memory` is present only with per-user memory switched on. Unless it says the requester
+granted consent, nothing about them is read or saved. With consent, what they let the
+bot remember is added to the prompt, and their message and the answer are saved for
+AgentCore Memory to learn from (see user_memory.py). Never in "correct" mode.
 Response:
     {"message": "...", "authRequired": null | {"authorizationUrl": "...", "sessionUri": "...",
                                                "cimd": {...}}}
+plus "memorySettings": true when the user asked to turn memory on or off, so that the
+worker sends them the private buttons.
 
 Tools come from two OAuth worlds:
     * linkedin.py / github.py  -- AgentCore Identity holds the tokens (client secret in AWS).
@@ -44,6 +51,7 @@ from strands import Agent
 from strands.models.bedrock import BedrockModel
 
 import config
+import user_memory
 from attachments import Attachments, build_read_attachment_tool
 from auth_state import AuthState
 from cimd import build_cimd_tools, enabled_providers
@@ -104,6 +112,17 @@ easier to see than to read, or the user asks for a diagram or chart, call draw_d
 posts the picture in the thread. Then keep your text to a line or two about what it shows. Never paste Mermaid source
 into your reply, Slack shows it as plain text. Skip the diagram for short or simple answers."""
 
+MEMORY_ON_RULE = """This user turned memory on. The message may come with notes about them in <about_requester>:
+use them to tailor the answer, as described there. What they tell you about themselves is picked up after the
+conversation without you doing anything, so don't announce that you'll remember something. If they ask to turn memory
+off, to forget what you know about them, or what you keep about them, call memory_settings."""
+
+MEMORY_OFF_RULE = """Nothing from this conversation is being remembered about this user. If they ask you to remember
+something about them, to turn memory on or off, or what you keep about them, call memory_settings. Never say you will
+remember something or that you have forgotten it: only they can change that, with the buttons they are sent."""
+
+_MEMORY_RULES = {"on": MEMORY_ON_RULE, "off": MEMORY_OFF_RULE}
+
 # Links to services people connect are read through that service's tool, as the user,
 # rather than fetched anonymously (which would only get a sign-in page).
 GITHUB_LINK_HOSTS = ("github.com",)
@@ -120,7 +139,7 @@ Otherwise reply with exactly {NO_CORRECTION}. That includes opinions, guesses, f
 have already corrected in this thread: never argue, and never correct the same point twice."""
 
 
-def _system_prompt(past_threads: bool = False, diagrams: bool = False) -> str:
+def _system_prompt(past_threads: bool = False, diagrams: bool = False, memory: str | None = None) -> str:
     """The base prompt plus one routing line per enabled CIMD provider, and a rule for each optional tool it has."""
     lines = [BASE_SYSTEM_PROMPT]
     for provider in enabled_providers():
@@ -138,6 +157,8 @@ def _system_prompt(past_threads: bool = False, diagrams: bool = False) -> str:
         lines.append(PAST_THREADS_RULE)
     if diagrams:
         lines.append(DIAGRAMS_RULE)
+    if memory:
+        lines.append(_MEMORY_RULES[memory])
     return "\n".join(lines)
 
 
@@ -152,8 +173,14 @@ def _link_routes() -> dict[str, str]:
 app = BedrockAgentCoreApp()
 model = BedrockModel(model_id=config.MODEL_ID, region_name=config.AWS_REGION, temperature=0.2, max_tokens=1024)
 SYSTEM_PROMPT = _system_prompt()
-# Built once: keyed by which optional tools (past threads, diagrams) the request gets.
-_SYSTEM_PROMPTS = {(past, draw): _system_prompt(past, draw) for past in (False, True) for draw in (False, True)}
+# Built once: keyed by which optional tools (past threads, diagrams) the request gets, and
+# whether memory is on or off for the requester (None without per-user memory).
+_SYSTEM_PROMPTS = {
+    (past, draw, memory): _system_prompt(past, draw, memory)
+    for past in (False, True)
+    for draw in (False, True)
+    for memory in (None, "off", "on")
+}
 
 
 @app.entrypoint
@@ -178,7 +205,14 @@ def invoke(payload: dict, context: RequestContext) -> dict:
     if attachments.latest:
         progress.show(f"\U0001f4ce Reading {_names(attachments.latest)}…")
     file_blocks, notes = attachments.open_latest()
-    user_prompt = build_prompt(prompt, payload.get("requester"), thread, notes)
+
+    # Only where agent_worker says this person agreed to it. `settings` exists whenever
+    # per-user memory is switched on, so that someone can ask to turn theirs on or off.
+    memory = user_memory.Scope.from_payload(payload.get("memory"), user_id)
+    memory_on_offer = bool(config.USER_MEMORY_ID) and isinstance(payload.get("memory"), dict)
+    settings = user_memory.SettingsRequest() if memory_on_offer else None
+    about = user_memory.recall(memory, prompt) if memory else []
+    user_prompt = build_prompt(prompt, payload.get("requester"), thread, notes, about)
 
     get_token = workload_token_provider(BedrockAgentCoreContext.get_workload_access_token(), user_id)
     auth_state = AuthState()
@@ -203,10 +237,13 @@ def invoke(payload: dict, context: RequestContext) -> dict:
     diagrams = diagrams_enabled(channel, thread_ts)
     if diagrams:
         tools.append(build_draw_diagram_tool(channel, thread_ts))
+    if settings:
+        tools.append(user_memory.build_memory_settings_tool(settings))
 
+    memory_state = ("on" if memory else "off") if settings else None
     agent = Agent(
         model=model,
-        system_prompt=_SYSTEM_PROMPTS[bool(scope), diagrams],
+        system_prompt=_SYSTEM_PROMPTS[bool(scope), diagrams, memory_state],
         tools=tools,
         callback_handler=progress.on_event,
     )
@@ -220,8 +257,18 @@ def invoke(payload: dict, context: RequestContext) -> dict:
     )
     # Files first, then the text that refers to them, as Anthropic recommends.
     result = agent([*file_blocks, {"text": user_prompt}] if file_blocks else user_prompt)
+    message = str(result).strip()
+    auth_required = auth_state.as_dict()
 
-    return {"message": str(result).strip(), "authRequired": auth_state.as_dict()}
+    # Not when the answer is "connect your account first": the question is asked again after.
+    if memory and not auth_required:
+        used = user_memory.tools_used(getattr(agent, "messages", None))
+        user_memory.remember(memory, session_id, prompt, message, used)
+
+    response = {"message": message, "authRequired": auth_required}
+    if settings and settings.requested:
+        response["memorySettings"] = True
+    return response
 
 
 def _names(files) -> str:
