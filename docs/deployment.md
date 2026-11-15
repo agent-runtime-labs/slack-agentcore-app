@@ -115,7 +115,7 @@ The agent image starts under AWS Distro for OpenTelemetry, so every turn that re
 | **Trace** | One `InvokeAgentRuntime` call: a reply, or a correction. |
 | **Span** | `invoke_agent slack_assistant` → `execute_event_loop_cycle` → `chat` (each model call) and `execute_tool <name>`. `use_github` and the CIMD tools nest an `invoke_agent github_agent` / `linear_agent` / `notion_agent` span with that sub-agent's own model and MCP calls. |
 
-Filter traces on `slack.mode` (`reply` or `correct`), `slack.thread_messages`, `slack.files`, `knowledge.scope` and `diagrams.enabled`.
+Sessions are keyed on `session.id`, which the agent sets on its spans ([main.py](../backends/agents/slack_agent/src/main.py)). Filter traces on `session.id`, `slack.mode` (`reply` or `correct`), `slack.thread_messages`, `slack.files`, `knowledge.scope` and `diagrams.enabled`.
 
 **No Slack text, names or IDs go into traces or telemetry logs.** Two things carry prompt text and both are switched off. The image sets `OTEL_SEMCONV_STABILITY_OPT_IN=gen_ai_unredacted_attributes=`, which makes Strands replace every prompt, answer, system prompt and tool input or result in its spans with `[REDACTED]`. ADOT's Bedrock instrumentation separately logs the same text as log events into the runtime log group when `OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT` is `true`, which the platform turns on, so `main.py` pins it to `false`. Timings, token counts and tool names remain. The session is the hashed `runtimeSessionId`, so finding a thread's trace means computing that hash, not searching by channel. To see content while debugging, you would have to change both settings in code and the image, and revert it afterwards. Locally (Tilt) there is no collector, so nothing is exported.
 

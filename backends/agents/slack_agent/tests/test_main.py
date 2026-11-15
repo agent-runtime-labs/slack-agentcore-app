@@ -92,6 +92,7 @@ def test_traces_carry_counts_and_enums_but_no_slack_identifiers():
     reply, correction = created
     assert reply.kwargs["name"] == "slack_assistant"
     assert reply.kwargs["trace_attributes"] == {
+        "session.id": "s" * 64,
         "slack.mode": "reply",
         "slack.thread_messages": 1,
         "slack.files": 0,
@@ -100,6 +101,7 @@ def test_traces_carry_counts_and_enums_but_no_slack_identifiers():
     }
     assert correction.kwargs["name"] == "slack_correction"
     assert correction.kwargs["trace_attributes"]["slack.mode"] == "correct"
+    assert correction.kwargs["trace_attributes"]["session.id"] == "s" * 64
     # Nothing that identifies a person, a channel or a thread, and no message text.
     flat = repr([reply.kwargs["trace_attributes"], correction.kwargs["trace_attributes"]])
     for leaked in ("Bob", "C123", "slack-T1", "open PRs", "1.0", "2.0"):

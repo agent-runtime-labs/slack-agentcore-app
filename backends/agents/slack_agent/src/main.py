@@ -177,7 +177,7 @@ def invoke(payload: dict, context: RequestContext) -> dict:
     # Read it here (request thread) rather than inside the tool.
     thread = payload.get("thread") or []
     if payload.get("mode") == MODE_CORRECT:
-        return _correct(build_prompt(prompt, payload.get("requester"), thread))
+        return _correct(build_prompt(prompt, payload.get("requester"), thread), session_id)
 
     progress = ProgressReporter(payload.get("channel"), payload.get("messageTs"))
     budget = ContentBudget()
@@ -218,7 +218,7 @@ def invoke(payload: dict, context: RequestContext) -> dict:
         tools=tools,
         callback_handler=progress.on_event,
         trace_attributes=_trace_attributes(
-            MODE_REPLY, thread=len(thread), files=len(attachments.latest), knowledge=scope, diagrams=diagrams
+            MODE_REPLY, session_id, thread=len(thread), files=len(attachments.latest), knowledge=scope, diagrams=diagrams
         ),
     )
 
@@ -236,14 +236,16 @@ def invoke(payload: dict, context: RequestContext) -> dict:
 
 
 def _trace_attributes(
-    mode: str, *, thread: int = 0, files: int = 0, knowledge: Scope | None = None, diagrams: bool = False
+    mode: str, session_id: str, *, thread: int = 0, files: int = 0, knowledge: Scope | None = None, diagrams: bool = False
 ) -> dict:
-    """Span attributes for filtering traces: enums and counts only.
+    """Span attributes for filtering traces: the session ID, enums and counts.
 
-    No Slack IDs, names or text. The session ID and user ID reach the spans from AgentCore
-    itself, and the Dockerfile redacts prompt and answer text.
+    `session.id` is what GenAI Observability groups traces into sessions by, so it must be on
+    the spans. It is the worker's SHA-256 of (team, channel, thread, user), which can't be
+    turned back into any of them. No Slack IDs, names or text: the Dockerfile redacts those.
     """
     return {
+        "session.id": session_id,
         "slack.mode": mode,
         "slack.thread_messages": thread,
         "slack.files": files,
@@ -258,7 +260,7 @@ def _names(files) -> str:
     return ", ".join(names) + (f" and {more} more" if more else "")
 
 
-def _correct(user_prompt: str) -> dict:
+def _correct(user_prompt: str, session_id: str) -> dict:
     """No tools: a correction may only rely on what the bot already posted in the thread."""
     agent = Agent(
         name="slack_correction",
@@ -266,7 +268,7 @@ def _correct(user_prompt: str) -> dict:
         system_prompt=CORRECTION_PROMPT,
         tools=[],
         callback_handler=None,
-        trace_attributes=_trace_attributes(MODE_CORRECT),
+        trace_attributes=_trace_attributes(MODE_CORRECT, session_id),
     )
     answer = str(agent(user_prompt)).strip()
     return {"message": "" if not answer or NO_CORRECTION in answer else answer, "authRequired": None}
