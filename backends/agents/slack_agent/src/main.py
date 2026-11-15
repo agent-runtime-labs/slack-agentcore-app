@@ -38,6 +38,7 @@ answer better (diagrams.py).
 
 import logging
 import os
+import re
 
 from bedrock_agentcore.runtime import BedrockAgentCoreApp, BedrockAgentCoreContext, RequestContext
 from strands import Agent
@@ -59,6 +60,19 @@ from web_fetch import build_fetch_url_tool
 
 logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO"))
 logger = logging.getLogger("slack_agent")
+
+# Telemetry carries session IDs, timings, token counts and tool names. It carries Slack text
+# (prompts, the thread, answers, tool results) only when TELEMETRY_CAPTURE_CONTENT=true, which
+# Terraform sets from telemetry_capture_content and only the dev tfvars turn on.
+# Two things carry that text, so one switch sets both: Strands' spans and events, redacted
+# unless their attributes are allow-listed, and ADOT's Bedrock instrumentation, which logs it
+# unless told not to. The platform turns that one on, so it is pinned here: it is read on
+# every call, and Strands reads the other when the first Agent is built, after this runs.
+CAPTURE_CONTENT = os.getenv("TELEMETRY_CAPTURE_CONTENT", "").lower() == "true"
+os.environ["OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT"] = "true" if CAPTURE_CONTENT else "false"
+os.environ["OTEL_SEMCONV_STABILITY_OPT_IN"] = "gen_ai_unredacted_attributes=" + (
+    "gen_ai.input.messages;gen_ai.output.messages;gen_ai.system_instructions" if CAPTURE_CONTENT else ""
+)
 
 BASE_SYSTEM_PROMPT = """You are an AI assistant taking part in a Slack thread alongside people. Behave like a helpful
 colleague: add to the conversation, don't take it over.
@@ -108,6 +122,7 @@ into your reply, Slack shows it as plain text. Skip the diagram for short or sim
 # rather than fetched anonymously (which would only get a sign-in page).
 GITHUB_LINK_HOSTS = ("github.com",)
 
+MODE_REPLY = "reply"
 MODE_CORRECT = "correct"
 NO_CORRECTION = "NO_CORRECTION"
 
@@ -170,7 +185,8 @@ def invoke(payload: dict, context: RequestContext) -> dict:
     # Read it here (request thread) rather than inside the tool.
     thread = payload.get("thread") or []
     if payload.get("mode") == MODE_CORRECT:
-        return _correct(build_prompt(prompt, payload.get("requester"), thread))
+        correction_prompt = build_prompt(prompt, payload.get("requester"), thread)
+        return _correct(correction_prompt, _session_attributes(payload, session_id))
 
     progress = ProgressReporter(payload.get("channel"), payload.get("messageTs"))
     budget = ContentBudget()
@@ -205,10 +221,19 @@ def invoke(payload: dict, context: RequestContext) -> dict:
         tools.append(build_draw_diagram_tool(channel, thread_ts))
 
     agent = Agent(
+        name="slack_assistant",
         model=model,
         system_prompt=_SYSTEM_PROMPTS[bool(scope), diagrams],
         tools=tools,
         callback_handler=progress.on_event,
+        trace_attributes=_trace_attributes(
+            MODE_REPLY,
+            _session_attributes(payload, session_id),
+            thread=len(thread),
+            files=len(attachments.latest),
+            knowledge=scope,
+            diagrams=diagrams,
+        ),
     )
 
     logger.info(
@@ -224,15 +249,63 @@ def invoke(payload: dict, context: RequestContext) -> dict:
     return {"message": str(result).strip(), "authRequired": auth_state.as_dict()}
 
 
+# "T0123ABC:C0456DEF:1731654620.123456": the worker's thread session (identity.thread_session_id).
+_THREAD_SESSION = re.compile(r"(?P<team>[A-Z0-9]{1,20}):(?P<channel>[A-Z0-9]{1,20}):(?P<thread>\d{1,12}\.\d{1,8})")
+
+
+def _session_attributes(payload: dict, runtime_session_id: str) -> dict:
+    """The attributes that place a trace in a session and let you find its Slack thread.
+
+    `session.id` is what GenAI Observability groups traces into sessions by. It is the thread
+    (team:channel:thread_ts), so everyone talking to the bot in a thread shares one session,
+    while `agentcore.session_id` keeps the per-person runtime session, which is what AgentCore's
+    own logs use. The channel and thread are repeated as attributes to filter on. The value is
+    checked before it goes on a span, and a missing or odd one falls back to the runtime session.
+    """
+    attributes = {"agentcore.session_id": runtime_session_id, "session.id": runtime_session_id}
+    value = payload.get("traceSessionId")
+    match = _THREAD_SESSION.fullmatch(value) if isinstance(value, str) else None
+    if match:
+        attributes.update(
+            {"session.id": value, "slack.channel_id": match["channel"], "slack.thread_ts": match["thread"]}
+        )
+    return attributes
+
+
+def _trace_attributes(
+    mode: str, session: dict, *, thread: int = 0, files: int = 0, knowledge: Scope | None = None, diagrams: bool = False
+) -> dict:
+    """Span attributes for filtering traces: the session (see _session_attributes), enums, counts.
+
+    The Slack team, channel and thread IDs are in there; user IDs, names and message text are
+    not. Message text is covered by CAPTURE_CONTENT above.
+    """
+    return {
+        **session,
+        "slack.mode": mode,
+        "slack.thread_messages": thread,
+        "slack.files": files,
+        "knowledge.scope": knowledge.scope if knowledge else "off",
+        "diagrams.enabled": diagrams,
+    }
+
+
 def _names(files) -> str:
     names = [file.name for file in files[:3]]
     more = len(files) - len(names)
     return ", ".join(names) + (f" and {more} more" if more else "")
 
 
-def _correct(user_prompt: str) -> dict:
+def _correct(user_prompt: str, session: dict) -> dict:
     """No tools: a correction may only rely on what the bot already posted in the thread."""
-    agent = Agent(model=model, system_prompt=CORRECTION_PROMPT, tools=[], callback_handler=None)
+    agent = Agent(
+        name="slack_correction",
+        model=model,
+        system_prompt=CORRECTION_PROMPT,
+        tools=[],
+        callback_handler=None,
+        trace_attributes=_trace_attributes(MODE_CORRECT, session),
+    )
     answer = str(agent(user_prompt)).strip()
     return {"message": "" if not answer or NO_CORRECTION in answer else answer, "authRequired": None}
 

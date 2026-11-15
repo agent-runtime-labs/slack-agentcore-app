@@ -33,7 +33,7 @@ import time
 from slack_app.agent_client import MODE_CORRECT, invoke_agent
 from slack_app.attachments import from_files
 from slack_app.config import knowledge_enabled, public_base_url
-from slack_app.identity import runtime_session_id, runtime_user_id
+from slack_app.identity import runtime_session_id, runtime_user_id, thread_session_id
 from slack_app.knowledge.scope import search_scope
 from slack_app.pending_auth import TTL_SECONDS, PendingAuth, new_nonce, pending_auth_store
 from slack_app.slack import (
@@ -112,6 +112,7 @@ def process(job: dict) -> None:
             requester=requester,
             files=[file.as_dict() for file in files],
             thread_ts=job["thread_ts"],
+            trace_session_id=thread_session_id(job["team_id"], job["channel"], job["thread_ts"]),
             **({"knowledge": knowledge} if knowledge else {}),
         )
     except Exception:
@@ -172,6 +173,7 @@ def _correct(slack, job: dict, prompt: str, requester: str, thread: Thread) -> N
             thread=[message.as_dict() for message in thread.history],
             requester=requester,
             mode=MODE_CORRECT,
+            trace_session_id=thread_session_id(job["team_id"], job["channel"], job["thread_ts"]),
         )
         correction = (result.get("message") or "").strip()
         if not correction:

@@ -119,6 +119,17 @@ variable "knowledge_excluded_channels" {
   default     = []
 }
 
+variable "telemetry_capture_content" {
+  type        = bool
+  default     = false
+  description = <<-EOT
+    Put Slack text (prompts, the thread, answers, tool results) in traces and in the runtime's
+    telemetry logs. Anyone who can read this account's CloudWatch can then read the
+    conversations, so leave it false except in a dev account. Session IDs, timings, token counts
+    and tool names are recorded either way.
+  EOT
+}
+
 variable "log_level" {
   type    = string
   default = "INFO"

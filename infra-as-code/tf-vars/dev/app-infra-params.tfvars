@@ -24,6 +24,10 @@ diagram_renderer_enabled = true
 knowledge_enabled           = true
 knowledge_excluded_channels = []
 
+# Dev only: readable prompts, thread text and answers in traces and telemetry logs. Anyone who
+# can read this account's CloudWatch can read the conversations. Leave it out elsewhere.
+telemetry_capture_content = true
+
 default_tags = {
   project     = "slack-agentcore-app"
   environment = "dev"

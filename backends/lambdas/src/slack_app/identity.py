@@ -25,3 +25,17 @@ def runtime_session_id(team_id: str, channel: str, thread_ts: str, slack_user_id
     """
     key = "|".join([team_id, channel, thread_ts, slack_user_id])
     return hashlib.sha256(key.encode("utf-8")).hexdigest()
+
+
+def thread_session_id(team_id: str, channel: str, thread_ts: str) -> str:
+    """The ID traces group a Slack thread under: "T0123ABC:C0456DEF:1731654620.123456".
+
+    Not the runtime session. runtime_session_id() stays per person, so each person keeps their own
+    container and workload token. This one has no user in it, so everyone who talks to the bot in
+    a thread lands in one session in GenAI Observability. It is readable on purpose, to find a
+    thread's trace from the Slack channel and thread timestamp, and has the same shape as the
+    knowledge index's thread key.
+    """
+    if not team_id or not channel or not thread_ts:
+        raise ValueError("team_id, channel and thread_ts are required")
+    return f"{team_id}:{channel}:{thread_ts}"

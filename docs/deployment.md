@@ -21,6 +21,7 @@ Not managed by Terraform: the LinkedIn and GitHub OAuth2 credential providers (s
 - You've done the local setup in [getting-started.md](getting-started.md), at least step 3 (`make identity`).
 - Docker is running (Terraform builds the images) and Terraform is ≥ 1.11.
 - You have an S3 bucket for Terraform state.
+- To see traces: **CloudWatch Transaction Search** enabled once per account and region, see [Observability](#enable-transaction-search-once-per-account-and-region). Without it the agent still runs, you just won't see its spans.
 
 ## Steps
 
@@ -103,6 +104,40 @@ Full step-by-step expectations for each flow are in [testing-guide.md § 7](test
 - **Code:** edit, then `./tf-wrapper.sh dev apply`. The changed image is rebuilt and the functions and runtime are updated.
 - **Model:** set `model_id` (chat) or `triage_model_id` in the tfvars (for example `us.amazon.nova-pro-v1:0`), then apply. IAM follows automatically. Cheaper models are more likely to misjudge when to answer, ask or stay quiet.
 - **CI-built images:** pass `-var agent_image_tag=<tag> -var lambda_image_tag=<tag>` to skip local builds.
+
+## Observability
+
+The agent image starts under AWS Distro for OpenTelemetry, so every turn that reaches the Runtime shows up in **CloudWatch → GenAI Observability → Bedrock AgentCore** (needs Transaction Search, see Prerequisites).
+
+| AgentCore term | Here |
+|---|---|
+| **Session** | One Slack thread, for everyone in it: `session.id` is `TEAM:CHANNEL:THREAD_TS`, e.g. `T0123ABC:C0456DEF:1731654620.123456` ([identity.py](../backends/lambdas/src/slack_app/identity.py)). The AgentCore runtime session stays one per person and is the `agentcore.session_id` attribute. |
+| **Trace** | One `InvokeAgentRuntime` call: a reply, or a correction. |
+| **Span** | `invoke_agent slack_assistant` → `execute_event_loop_cycle` → `chat` (each model call) and `execute_tool <name>`. `use_github` and the CIMD tools nest an `invoke_agent github_agent` / `linear_agent` / `notion_agent` span with that sub-agent's own model and MCP calls. |
+
+**Finding a thread's trace.** GenAI Observability groups traces into sessions by `session.id`, which the agent sets on its spans ([main.py](../backends/agents/slack_agent/src/main.py)). Because it is the thread, search for the Slack channel ID and thread timestamp (the part of a message's link after `thread_ts=` or `p`, as `1731654620.123456`). `slack.channel_id` and `slack.thread_ts` are also span attributes to filter on, along with `slack.mode` (`reply` or `correct`), `slack.thread_messages`, `slack.files`, `knowledge.scope` and `diagrams.enabled`. `agentcore.session_id` is the per-person runtime session, the one AgentCore's own logs and container lifecycle use. Team, channel and thread IDs are in telemetry whatever `telemetry_capture_content` says; user IDs and names are not.
+
+**Message text stays out of traces and telemetry logs unless you turn it on.** `telemetry_capture_content` (Terraform, default `false`) decides. Off, the agent records session IDs, timings, token counts and tool names, and every prompt, thread, answer, system prompt and tool input or result shows as `[REDACTED]`. Two things carry that text and one switch sets both: Strands' spans and events, and ADOT's Bedrock instrumentation, which otherwise logs it as events in the runtime log group (the platform turns that on, so [main.py](../backends/agents/slack_agent/src/main.py) pins it).
+
+The dev tfvars set it to `true`, so in dev you can read what was asked and answered in the GenAI Observability trace view. **Anyone who can read that account's CloudWatch can then read the Slack conversations**, so leave it unset in any other environment. Turning it on or off is a `terraform apply`: no image rebuild. Text from before a change stays in the log group until its retention removes it. Locally (Tilt) there is no collector, so nothing is exported.
+
+The worker starts each trace itself and sends it, marked sampled, on `InvokeAgentRuntime` ([agent_client.py](../backends/lambdas/src/slack_app/agent_client.py)). Without that, botocore passes the Lambda's own trace header, which is unsampled because the Lambda isn't traced, and the agent exports nothing: no spans, and an empty **OTEL sessions** table.
+
+This covers the Runtime only. The `slack-events` and `agent-worker` Lambdas are not traced yet, so a trace starts at `InvokeAgentRuntime` and does not link back to the Slack event.
+
+### Enable Transaction Search (once per account and region)
+
+It sends X-Ray spans to the `aws/spans` CloudWatch log group, which is where the GenAI Observability dashboard reads them. It is account-wide (everything in the account that sends X-Ray spans is affected), so it is a script and not part of this Terraform. Use the same region as `region` in your tfvars.
+
+```bash
+./infra-as-code/scripts/transaction-search.sh status   -r us-east-1            # read-only
+./infra-as-code/scripts/transaction-search.sh enable   -r us-east-1 -i 100     # -n for a dry run
+./infra-as-code/scripts/transaction-search.sh disable  -r us-east-1
+```
+
+`-p <profile>` picks an AWS CLI profile, and The account comes from that profile (or `AWS_PROFILE`), and `enable` and `disable` show it with the region and ask `y/N` first; `-y` skips the question. `enable` lets X-Ray write to the `aws/spans` and `/aws/application-signals/data` log groups, points the trace destination at CloudWatch Logs and waits for it to be `ACTIVE`; it is safe to run again. `-i` sets the indexing rate, the share of traces searchable as summaries (spans are stored whatever it is). An account's default is 1, so `-i 100` is handy on a dev stack. `disable` points the destination back at X-Ray and removes the log policy `enable` added. Spans already in `aws/spans` stay until its retention removes them.
+
+Then send a message to the bot and open **CloudWatch → GenAI Observability → Bedrock AgentCore**. Spans usually take a few minutes to appear after the first request.
 
 ## Other environments
 
